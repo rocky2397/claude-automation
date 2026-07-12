@@ -1,8 +1,34 @@
 name: Reusable - Hello
 on:
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      max_turns:
+        required: false
+        type: number
+        default: 30
+      model:
+        required: false
+        type: string
+        default: "claude-fable-5"
+      fallback_model:
+        required: false
+        type: string
+        default: "claude-sonnet-5"
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: claude-worker-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
 jobs:
   hello:
     runs-on: ubuntu-latest
     steps:
-      - run: echo hello
+      - run: echo "model=${{ inputs.model }} fallback=${{ inputs.fallback_model }} turns=${{ inputs.max_turns }}"

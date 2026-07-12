@@ -22,4 +22,4 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-      - run: echo "model=${{ inputs.model }} fallback=${{ inputs.fallback_model }} turns=${{ inputs.max_turns }}"
+      - run: echo hello

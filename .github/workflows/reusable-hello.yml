@@ -18,13 +18,12 @@ on:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: true
 
-permissions:
-  contents: write
-  issues: write
-  pull-requests: write
-
 jobs:
   hello:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
     steps:
       - run: echo "model=${{ inputs.model }} fallback=${{ inputs.fallback_model }} turns=${{ inputs.max_turns }}"

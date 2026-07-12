@@ -21,8 +21,16 @@ on:
         required: false
         type: number
         default: 6
+      model:
+        required: false
+        type: string
+        default: "claude-fable-5"
+      fallback_model:
+        required: false
+        type: string
+        default: "claude-sonnet-5"
     secrets:
-      ANTHROPIC_API_KEY:
+      CLAUDE_CODE_OAUTH_TOKEN:
         required: true
       PROJECT_TOKEN:
         required: true
@@ -95,7 +103,7 @@ jobs:
         id: prioritize
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             Read board.json (GitHub Project items, already scoped to this
             repository) and the policy in .claude/prioritization.md.
@@ -109,7 +117,8 @@ jobs:
                implement them, each with the specific question to ask.
           claude_args: |
             --max-turns ${{ inputs.max_turns }}
-            --model claude-fable-5
+            --model ${{ inputs.model }}
+            --fallback-model ${{ inputs.fallback_model }}
             --json-schema '{"type":"object","properties":{"top_pick":{"type":["object","null"],"properties":{"number":{"type":"integer"},"reason":{"type":"string"}},"required":["number","reason"]},"deprioritized":{"type":"array","items":{"type":"object","properties":{"number":{"type":"integer"},"reason":{"type":"string"}},"required":["number","reason"]}},"blocked":{"type":"array","items":{"type":"object","properties":{"number":{"type":"integer"},"question":{"type":"string"}},"required":["number","question"]}}},"required":["top_pick","deprioritized","blocked"]}'
 
       - name: Dispatch decision

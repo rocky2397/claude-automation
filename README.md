@@ -14,7 +14,10 @@ copy-pasting orchestration logic:
 - `.github/workflows/reusable-worker.yml` — triggered when an issue is
   labeled `claude-work`; implements it on a branch and opens a PR.
 
-Both use `anthropics/claude-code-action@v1` with `claude-fable-5` as the model.
+Both use `anthropics/claude-code-action@v1`, authenticated with a Claude
+subscription OAuth token (no API billing). The model defaults to
+`claude-fable-5` with `claude-sonnet-5` as automatic fallback; both are
+overridable per repo via the `model` and `fallback_model` inputs.
 
 ## Installing in a target repo
 
@@ -23,7 +26,9 @@ Both use `anthropics/claude-code-action@v1` with `claude-fable-5` as the model.
 2. Create a fine-grained PAT (or GitHub App token) with `project` read/write
    scope, store it as the `PROJECT_TOKEN` secret. The default
    `GITHUB_TOKEN` cannot read Projects v2 boards.
-3. Store `ANTHROPIC_API_KEY` (org or user level, so repos don't duplicate it).
+3. Run `claude setup-token` locally (requires a Pro/Max subscription) and
+   store the result as the `CLAUDE_CODE_OAUTH_TOKEN` secret (org or user
+   level, so repos don't duplicate it).
 4. Copy the three files from `templates/` into the target repo:
    - `templates/claude-automation.yml` → `.github/workflows/claude-automation.yml`
      (update `your-user` and `project_owner` to point at this repo and at

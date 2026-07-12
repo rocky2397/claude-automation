@@ -12,6 +12,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      id-token: write
     uses: your-user/claude-automation/.github/workflows/reusable-prioritizer.yml@main
     with:
       project_number: ${{ fromJSON(vars.PROJECT_NUMBER) }}
@@ -32,6 +33,7 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
+      id-token: write
     uses: your-user/claude-automation/.github/workflows/reusable-worker.yml@main
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

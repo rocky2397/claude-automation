@@ -1,0 +1,139 @@
+name: Reusable - Ticket Prioritizer
+
+on:
+  workflow_call:
+    inputs:
+      project_number:
+        required: true
+        type: number
+      project_owner:
+        required: true
+        type: string
+      owner_type:
+        required: false
+        type: string
+        default: "user"   # "user" | "organization"
+      wip_limit:
+        required: false
+        type: number
+        default: 1
+      max_turns:
+        required: false
+        type: number
+        default: 6
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+      PROJECT_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  prioritize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check WIP limit
+        id: wip
+        run: |
+          COUNT=$(gh issue list --label claude-work --state open --json number --jq 'length')
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Fetch project board (scoped to this repo)
+        if: fromJSON(steps.wip.outputs.count) < inputs.wip_limit
+        id: board
+        run: |
+          QUERY_ROOT="organization"
+          if [ "$OWNER_TYPE" = "user" ]; then QUERY_ROOT="user"; fi
+
+          gh api graphql -f query="
+            query(\$owner: String!, \$number: Int!) {
+              $QUERY_ROOT(login: \$owner) {
+                projectV2(number: \$number) {
+                  items(first: 100) {
+                    nodes {
+                      id
+                      fieldValueByName(name: \"Status\") {
+                        ... on ProjectV2ItemFieldSingleSelectValue { name }
+                      }
+                      content {
+                        ... on Issue {
+                          number title body url updatedAt
+                          repository { nameWithOwner }
+                          labels(first: 10) { nodes { name } }
+                          assignees(first: 5) { nodes { login } }
+                          author { login }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }" -f owner="$PROJECT_OWNER" -F number="$PROJECT_NUMBER" > raw_board.json
+
+          # Scoping filter (mandatory): only items whose issue belongs to this repo,
+          # and drop bot-authored issues to avoid feedback loops.
+          jq --arg repo "$GITHUB_REPOSITORY" --arg root "$QUERY_ROOT" \
+            '[.data[$root].projectV2.items.nodes[]
+              | select(.content.repository.nameWithOwner == $repo)
+              | select((.content.author.login // "") | endswith("[bot]") | not)]' \
+            raw_board.json > board.json
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          PROJECT_OWNER: ${{ inputs.project_owner }}
+          PROJECT_NUMBER: ${{ inputs.project_number }}
+          OWNER_TYPE: ${{ inputs.owner_type }}
+
+      - name: Prioritize with Claude
+        if: fromJSON(steps.wip.outputs.count) < inputs.wip_limit
+        id: prioritize
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Read board.json (GitHub Project items, already scoped to this
+            repository) and the policy in .claude/prioritization.md.
+
+            Decide:
+            1. top_pick: exactly one issue number to work on now, or null
+               if nothing is ready.
+            2. deprioritized: issue numbers that should NOT be worked on,
+               each with a one-sentence reason.
+            3. blocked: issue numbers that lack the information needed to
+               implement them, each with the specific question to ask.
+
+            Respond ONLY with JSON:
+            {"top_pick": {"number": N, "reason": "..."},
+             "deprioritized": [{"number": N, "reason": "..."}],
+             "blocked": [{"number": N, "question": "..."}]}
+          claude_args: "--max-turns ${{ inputs.max_turns }} --model claude-fable-5"
+
+      - name: Dispatch decision
+        if: fromJSON(steps.wip.outputs.count) < inputs.wip_limit
+        run: |
+          TOP=$(jq -r '.top_pick.number // empty' decision.json)
+          if [ -n "$TOP" ]; then
+            gh issue edit "$TOP" --add-label "claude-work"
+            gh issue comment "$TOP" --body "Prioritizer selected this ticket. Reason: $(jq -r '.top_pick.reason' decision.json)"
+          fi
+
+          jq -c '.blocked[]?' decision.json | while read -r item; do
+            NUM=$(echo "$item" | jq -r '.number')
+            Q=$(echo "$item" | jq -r '.question')
+            gh issue comment "$NUM" --body "Blocked by prioritizer. Missing info: $Q"
+            gh issue edit "$NUM" --add-label "needs-info"
+          done
+
+          jq -c '.deprioritized[]?' decision.json | while read -r item; do
+            NUM=$(echo "$item" | jq -r '.number')
+            R=$(echo "$item" | jq -r '.reason')
+            gh issue comment "$NUM" --body "Deprioritized: $R"
+          done
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}

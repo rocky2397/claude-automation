@@ -1,0 +1,51 @@
+name: Reusable - Claude Worker
+
+on:
+  workflow_call:
+    inputs:
+      max_turns:
+        required: false
+        type: number
+        default: 30
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: claude-worker-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    if: github.event_name == 'issues' && github.event.label.name == 'claude-work'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Implement issue #${{ github.event.issue.number }}:
+            "${{ github.event.issue.title }}"
+
+            Requirements:
+            - Follow CLAUDE.md conventions strictly, including the path
+              denylist (never modify .github/workflows/, infra/, or
+              migrations/).
+            - Make the minimal change that fully resolves the issue.
+            - Write or update tests for the change.
+            - Run the test suite. Do not open a PR if tests fail;
+              instead comment on the issue with the failure.
+            - Open a PR titled "fix: <issue title> (#N)" that closes
+              the issue, with a summary of the approach and any
+              tradeoffs.
+            - Remove the "claude-work" label and add "in-review".
+          claude_args: "--max-turns ${{ inputs.max_turns }} --model claude-fable-5"

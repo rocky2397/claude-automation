@@ -1,0 +1,26 @@
+name: Claude Automation
+on:
+  schedule:
+    - cron: "0 7,13 * * 1-5"   # 07:00 and 13:00 UTC, weekdays
+  workflow_dispatch: {}
+  issues:
+    types: [labeled]
+
+jobs:
+  prioritize:
+    if: github.event_name != 'issues'
+    uses: your-user/claude-automation/.github/workflows/reusable-prioritizer.yml@main
+    with:
+      project_number: ${{ vars.PROJECT_NUMBER }}
+      project_owner: your-user-or-org
+      owner_type: user   # or "organization"
+      wip_limit: 1
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+
+  work:
+    if: github.event_name == 'issues' && github.event.label.name == 'claude-work'
+    uses: your-user/claude-automation/.github/workflows/reusable-worker.yml@main
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

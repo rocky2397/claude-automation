@@ -23,10 +23,6 @@ permissions:
   issues: write
   pull-requests: write
 
-concurrency:
-  group: claude-worker-${{ github.event.issue.number }}
-  cancel-in-progress: false
-
 jobs:
   hello:
     runs-on: ubuntu-latest

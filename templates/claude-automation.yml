@@ -11,7 +11,7 @@ jobs:
     if: github.event_name != 'issues'
     uses: your-user/claude-automation/.github/workflows/reusable-prioritizer.yml@main
     with:
-      project_number: ${{ vars.PROJECT_NUMBER }}
+      project_number: ${{ fromJSON(vars.PROJECT_NUMBER) }}
       project_owner: your-user-or-org
       owner_type: user   # or "organization"
       wip_limit: 1

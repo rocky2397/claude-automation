@@ -15,7 +15,8 @@ The system is built almost entirely from existing components. The custom work is
 | Prioritization policy | Custom, per repo | `.claude/prioritization.md` |
 | Coding standards | Custom, per repo | `CLAUDE.md` at repo root |
 | Board access | Existing API | GitHub GraphQL API (Projects v2), via `gh api graphql` |
-| Auth | Existing | Claude GitHub App + `ANTHROPIC_API_KEY` secret (or `CLAUDE_CODE_OAUTH_TOKEN` on Pro/Max) |
+| Auth | Existing | Claude GitHub App + `CLAUDE_CODE_OAUTH_TOKEN` secret (Pro/Max subscription, generated with `claude setup-token`) |
+| Model | Existing | `claude-fable-5`, with `claude-sonnet-5` as automatic fallback |
 
 ## 3. Architecture
 
@@ -117,7 +118,7 @@ jobs:
         if: steps.wip.outputs.count == '0'
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             Read board.json (GitHub Project items) and the policy in
             .claude/prioritization.md.
@@ -134,7 +135,7 @@ jobs:
             {"top_pick": {"number": N, "reason": "..."},
              "deprioritized": [{"number": N, "reason": "..."}],
              "blocked": [{"number": N, "question": "..."}]}
-          claude_args: "--max-turns 6 --model claude-sonnet-4-6"
+          claude_args: "--max-turns 6 --model claude-fable-5 --fallback-model claude-sonnet-5"
 
       - name: Dispatch decision
         if: steps.wip.outputs.count == '0'
@@ -160,7 +161,7 @@ jobs:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
 ```
 
-Note. The exact mechanism for capturing Claude's JSON output depends on the action version. `claude-code-action@v1` supports structured outputs that become action outputs. Verify against the current docs (https://github.com/anthropics/claude-code-action) and adapt the "Dispatch decision" step to read from the action output instead of a file if needed.
+Note. Resolved in the implementation: pass a `--json-schema '<inline schema>'` flag in `claude_args`; the action validates Claude's answer against it and exposes the result as the `structured_output` action output. The "Dispatch decision" step reads `steps.<id>.outputs.structured_output` (via an env var) and writes it to `decision.json`, rather than relying on Claude writing the file itself.
 
 ### 4.2 `.github/workflows/claude-worker.yml`
 
@@ -186,7 +187,7 @@ jobs:
 
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             Implement issue #${{ github.event.issue.number }}:
             "${{ github.event.issue.title }}"
@@ -201,7 +202,7 @@ jobs:
               the issue, with a summary of the approach and any
               tradeoffs.
             - Remove the "claude-work" label and add "in-review".
-          claude_args: "--max-turns 30 --model claude-sonnet-4-6"
+          claude_args: "--max-turns 30 --model claude-fable-5 --fallback-model claude-sonnet-5"
 ```
 
 ### 4.3 `.claude/prioritization.md` (per project, this is where project-specificity lives)
@@ -248,11 +249,12 @@ Coding conventions, test commands, branch naming, PR format. The worker reads th
 ## 5. Setup steps
 
 1. In Claude Code terminal, run `/install-github-app` in each target repo. This installs the Claude GitHub App and configures secrets.
-2. Create a fine-grained PAT (or GitHub App token) with `project` read/write scope and store as `PROJECT_TOKEN`. The default `GITHUB_TOKEN` cannot read Projects v2 boards.
-3. Add the four files above. Adjust `ORG` and `PROJECT_NUMBER`.
-4. Create labels: `claude-work`, `in-review`, `needs-info`.
-5. Add "Icebox" and "In Review" columns to the board if not present.
-6. Test via `workflow_dispatch` before enabling cron.
+2. Run `claude setup-token` locally (Pro/Max subscription) and store the result as the `CLAUDE_CODE_OAUTH_TOKEN` secret, so runs bill against the subscription instead of API usage.
+3. Create a fine-grained PAT (or GitHub App token) with `project` read/write scope and store as `PROJECT_TOKEN`. The default `GITHUB_TOKEN` cannot read Projects v2 boards.
+4. Add the four files above. Adjust `ORG` and `PROJECT_NUMBER`.
+5. Create labels: `claude-work`, `in-review`, `needs-info`.
+6. Add "Icebox" and "In Review" columns to the board if not present.
+7. Test via `workflow_dispatch` before enabling cron.
 
 ## 6. Multi-repo reuse with strict per-repo scoping
 
@@ -280,10 +282,13 @@ on:
     inputs:
       project_number: { required: true, type: number }
       project_owner:  { required: true, type: string }
+      owner_type:     { required: false, type: string, default: "user" }
       wip_limit:      { required: false, type: number, default: 1 }
+      model:          { required: false, type: string, default: "claude-fable-5" }
+      fallback_model: { required: false, type: string, default: "claude-sonnet-5" }
     secrets:
-      ANTHROPIC_API_KEY: { required: true }
-      PROJECT_TOKEN:     { required: true }
+      CLAUDE_CODE_OAUTH_TOKEN: { required: true }
+      PROJECT_TOKEN:           { required: true }
 ```
 
 Each target repo then carries only three small files plus one variable:
@@ -314,17 +319,17 @@ jobs:
       project_number: ${{ vars.PROJECT_NUMBER }}
       project_owner: your-user
     secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
 
   work:
     if: github.event_name == 'issues' && github.event.label.name == 'claude-work'
     uses: your-user/claude-automation/.github/workflows/reusable-worker.yml@main
     secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
-Store `ANTHROPIC_API_KEY` and `PROJECT_TOKEN` as organization or user level secrets once, so target repos don't duplicate them. `PROJECT_NUMBER` is a repository variable, set per repo.
+Store `CLAUDE_CODE_OAUTH_TOKEN` and `PROJECT_TOKEN` as organization or user level secrets once, so target repos don't duplicate them. `PROJECT_NUMBER` is a repository variable, set per repo.
 
 ### 6.3 Repo scoping filter (mandatory)
 
@@ -385,7 +390,7 @@ Recommendation: never skip Phase 1. An agent that merges its own unreviewed code
 
 ## 9. Cost estimate
 
-Prioritizer: ~2 runs/day, small context, Sonnet, roughly cents per run. Worker: depends on ticket size, typically low single-digit dollars per implemented ticket at Sonnet pricing. Comparable community setups report $15 to $25/month for 10 to 15 PRs/week. Pro/Max subscribers can authenticate the action with an OAuth token instead of per-token API billing (`claude setup-token`).
+The action authenticates with a Pro/Max subscription OAuth token (`claude setup-token`), so runs consume subscription usage rather than per-token API billing. Prioritizer: ~2 runs/day with small context; Worker: depends on ticket size. `--max-turns` caps on both workflows bound consumption per run. If subscription limits ever become a constraint, switching to `ANTHROPIC_API_KEY` per-token billing is a one-line change in the caller secrets; comparable API-billed setups report $15 to $25/month for 10 to 15 PRs/week.
 
 ## 10. Out of scope for v1 (candidates for v2)
 

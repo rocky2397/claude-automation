@@ -60,7 +60,13 @@ jobs:
             - Open a PR titled "fix: <issue title> (#N)" that closes
               the issue, with a summary of the approach and any
               tradeoffs.
-            - Remove the "claude-work" label and add "in-review".
+            - After opening the PR, wait for its CI checks to finish
+              with `gh pr checks <PR> --watch`. If any check fails,
+              do not remove the "claude-work" label — instead comment
+              on the PR with the failing check's output and leave the
+              issue as-is for follow-up.
+            - Only once CI is green: remove the "claude-work" label
+              and add "in-review".
           # Bash is disallowed by default in CI; without this whitelist the
           # worker cannot commit, push, test, or open the PR.
           claude_args: |

@@ -21,25 +21,14 @@ overridable per repo via the `model` and `fallback_model` inputs.
 
 ## Installing in a target repo
 
-1. Run `/install-github-app` in the target repo (installs the Claude GitHub
-   App and configures secrets).
-2. Create a fine-grained PAT (or GitHub App token) with `project` read/write
-   scope, store it as the `PROJECT_TOKEN` secret. The default
-   `GITHUB_TOKEN` cannot read Projects v2 boards.
-3. Run `claude setup-token` locally (requires a Pro/Max subscription) and
-   store the result as the `CLAUDE_CODE_OAUTH_TOKEN` secret (org or user
-   level, so repos don't duplicate it).
-4. Copy the three files from `templates/` into the target repo:
-   - `templates/claude-automation.yml` → `.github/workflows/claude-automation.yml`
-     (update `your-user` and `project_owner` to point at this repo and at
-     the target's own owner/org)
-   - `templates/.claude/prioritization.md` → `.claude/prioritization.md`
-     (edit ranking criteria for that project)
-   - `templates/CLAUDE.md` → `CLAUDE.md` (edit conventions for that project)
-5. Set the repository variable `PROJECT_NUMBER` to the board's number.
-6. Create labels `claude-work`, `in-review`, `needs-info`.
-7. Add "Icebox" and "In Review" columns to the board if not present.
-8. Test via `workflow_dispatch` before relying on the cron schedule.
+See [INSTALL.md](INSTALL.md) for the full per-repo checklist with commands
+and a troubleshooting section. In short: create/link a Projects v2 board,
+set `PROJECT_NUMBER` + the two secrets (`CLAUDE_CODE_OAUTH_TOKEN` from
+`claude setup-token`, `PROJECT_TOKEN` — a **classic** PAT with
+`repo,project` scopes; fine-grained PATs and the default `GITHUB_TOKEN`
+cannot access user-owned Projects v2 boards), create the three labels,
+copy the three files from `templates/`, and smoke-test via
+`workflow_dispatch`.
 
 ## Versioning
 

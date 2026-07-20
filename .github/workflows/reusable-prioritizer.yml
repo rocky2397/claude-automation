@@ -20,7 +20,7 @@ on:
       max_turns:
         required: false
         type: number
-        default: 6
+        default: 8
       model:
         required: false
         type: string
@@ -106,12 +106,27 @@ jobs:
         if: fromJSON(steps.wip.outputs.count) < inputs.wip_limit
         id: prioritize
         uses: anthropics/claude-code-action@v1
+        env:
+          # gh CLI inside Claude's Bash needs a token for the read-only
+          # duplicate-check calls allowed below; github.token (not
+          # PROJECT_TOKEN) is enough since these are repo-level reads,
+          # not Projects v2 board access.
+          GH_TOKEN: ${{ github.token }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          show_full_output: true
           prompt: |
             Read board.json (GitHub Project items, already scoped to this
             repository) and the policy in .claude/prioritization.md.
+
+            To check whether a ticket is a duplicate of an open PR or
+            already implemented (per the policy's "not worth working on"
+            rules), you may run exactly one of: `gh pr list`, `gh pr view`,
+            `gh issue view`, or `git ls-remote` — these are pre-approved,
+            read-only, and will not be denied. Use at most one such call
+            per ticket you need to check; don't retry variants of the same
+            check. If a tool call is ever denied, don't retry it or try an
+            alternative command — just decide from board.json and
+            .claude/prioritization.md alone.
 
             Decide:
             1. top_pick: exactly one issue number to work on now, or null
@@ -124,6 +139,7 @@ jobs:
             --max-turns ${{ inputs.max_turns }}
             --model ${{ inputs.model }}
             --fallback-model ${{ inputs.fallback_model }}
+            --allowedTools "Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh issue view:*),Bash(git ls-remote:*)"
             --json-schema '{"type":"object","properties":{"top_pick":{"type":["object","null"],"properties":{"number":{"type":"integer"},"reason":{"type":"string"}},"required":["number","reason"]},"deprioritized":{"type":"array","items":{"type":"object","properties":{"number":{"type":"integer"},"reason":{"type":"string"}},"required":["number","reason"]}},"blocked":{"type":"array","items":{"type":"object","properties":{"number":{"type":"integer"},"question":{"type":"string"}},"required":["number","question"]}}},"required":["top_pick","deprioritized","blocked"]}'
 
       - name: Dispatch decision

@@ -429,6 +429,7 @@ Recommendation: never skip Phase 1. An agent that merges its own unreviewed code
 - Concurrency group on the worker workflow (and on the triage workflow, per issue) to prevent parallel runs on the same issue.
 - Bot-comment exclusion: prioritizer ignores issues opened by bots to avoid feedback loops.
 - Triage step has no Bash/`gh` access and cannot close, reject, or judge tickets — structural, not policy-enforced. It only ever rewrites title/body and swaps one label.
+- Prioritizer's only Bash access is a narrow, read-only allowlist (`gh pr list`, `gh pr view`, `gh issue view`, `git ls-remote`) so it can check its own "duplicate of an open PR" rule without falling back to repeated denied attempts at other commands; it cannot edit, close, merge, or comment via Bash — the "Dispatch decision" step is still the only place that writes anything, via `gh issue edit`/`gh issue comment`.
 
 ## 9. Cost estimate
 

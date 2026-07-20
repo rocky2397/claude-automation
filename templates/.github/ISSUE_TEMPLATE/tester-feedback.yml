@@ -1,0 +1,27 @@
+name: Feedback (for testers)
+description: Something felt wrong or unexpected? Tell us in your own words — no need to know code.
+title: "[Feedback] "
+labels:
+  - feedback-raw
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing. You don't need to know anything technical — just
+        describe what happened. A teammate (an AI one) will turn this into a
+        proper ticket before anyone works on it.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe what you saw or did — what screen, what you tapped, what you typed.
+      placeholder: "I tapped Send on the chat screen and nothing happened."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect instead?
+      placeholder: "I expected my message to appear in the chat."
+    validations:
+      required: true

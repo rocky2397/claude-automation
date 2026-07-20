@@ -1,0 +1,100 @@
+name: Reusable - Feedback Triage
+
+on:
+  workflow_call:
+    inputs:
+      max_turns:
+        required: false
+        type: number
+        default: 4
+      model:
+        required: false
+        type: string
+        default: "claude-haiku-4-5"
+      fallback_model:
+        required: false
+        type: string
+        default: "claude-sonnet-5"
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+concurrency:
+  group: claude-triage-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    if: >-
+      github.event_name == 'issues' && github.event.action == 'opened' &&
+      contains(github.event.issue.labels.*.name, 'feedback-raw')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reformat with Claude
+        id: triage
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            A non-technical tester filed this free-text feedback as issue
+            #${{ github.event.issue.number }}:
+
+            Title: ${{ github.event.issue.title }}
+            Body:
+            ${{ github.event.issue.body }}
+
+            Read .claude/ticket-format.md for the exact ticket shape this
+            project expects, then rewrite the feedback into that shape.
+
+            Return:
+            - title: a short, specific, imperative title (e.g. "Fix tab
+              title on all pages").
+            - body: Markdown with, in order: "## Problem", "## Expected",
+              "## Scope", "## Acceptance criteria", and "## Original report"
+              (the tester's original title and body, verbatim, in a
+              blockquote — exactly as in .claude/ticket-format.md).
+
+            Rules:
+            - Only reformat. Never judge whether this feedback is worth
+              acting on. Never suggest closing, rejecting, deprioritizing,
+              or ignoring it — that decision belongs to a separate process.
+            - Do not invent scope, file paths, or acceptance criteria not
+              supported by the tester's own words. If you cannot infer a
+              concrete Scope or Acceptance criteria, write
+              "Needs clarification: <specific question>" in that section
+              instead of guessing.
+            - Preserve the tester's original words exactly, even if short
+              or vague.
+          claude_args: |
+            --max-turns ${{ inputs.max_turns }}
+            --model ${{ inputs.model }}
+            --fallback-model ${{ inputs.fallback_model }}
+            --json-schema '{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"}},"required":["title","body"]}'
+
+      - name: Apply reformatted ticket
+        run: |
+          printf '%s' "$TRIAGE" > triage.json
+          jq . triage.json >/dev/null   # fail loudly on malformed output
+
+          TITLE=$(jq -r '.title' triage.json)
+          BODY=$(jq -r '.body' triage.json)
+
+          gh issue edit "${{ github.event.issue.number }}" \
+            --title "$TITLE" \
+            --body "$BODY" \
+            --add-label "feedback-triaged" \
+            --remove-label "feedback-raw"
+        env:
+          # github.token (not PROJECT_TOKEN) is deliberate: this job never
+          # queries Projects v2, only edits the issue that triggered it.
+          # Bonus: GITHUB_TOKEN-authored events don't trigger new workflow
+          # runs, so this label swap can't re-fire this workflow.
+          GH_TOKEN: ${{ github.token }}
+          TRIAGE: ${{ steps.triage.outputs.structured_output }}

@@ -87,11 +87,14 @@ jobs:
             }" -f owner="$PROJECT_OWNER" -F number="$PROJECT_NUMBER" > raw_board.json
 
           # Scoping filter (mandatory): only items whose issue belongs to this repo,
-          # and drop bot-authored issues to avoid feedback loops.
+          # drop bot-authored issues, and drop untriaged tester feedback (label
+          # feedback-raw) so the prioritizer never double-handles a ticket that
+          # reusable-triage.yml is about to rewrite.
           jq --arg repo "$GITHUB_REPOSITORY" --arg root "$QUERY_ROOT" \
             '[.data[$root].projectV2.items.nodes[]
               | select(.content.repository.nameWithOwner == $repo)
-              | select((.content.author.login // "") | endswith("[bot]") | not)]' \
+              | select((.content.author.login // "") | endswith("[bot]") | not)
+              | select(((.content.labels.nodes // []) | map(.name)) | index("feedback-raw") | not)]' \
             raw_board.json > board.json
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}

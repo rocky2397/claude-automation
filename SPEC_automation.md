@@ -11,6 +11,7 @@ The system is built almost entirely from existing components. The custom work is
 | Component | Type | Source |
 |---|---|---|
 | Worker (ticket → PR) | Existing product | `anthropics/claude-code-action@v1` |
+| Triage (raw feedback → ticket) | Custom, shared | One reusable GitHub Actions workflow (`reusable-triage.yml`) |
 | Orchestrator (board → decision → dispatch) | Custom | One GitHub Actions workflow (cron) |
 | Prioritization policy | Custom, per repo | `.claude/prioritization.md` |
 | Coding standards | Custom, per repo | `CLAUDE.md` at repo root |
@@ -19,6 +20,20 @@ The system is built almost entirely from existing components. The custom work is
 | Model | Existing | `claude-fable-5`, with `claude-sonnet-5` as automatic fallback |
 
 ## 3. Architecture
+
+Ahead of the prioritizer, an optional triage stage handles tickets filed
+by non-technical testers. Testers use a "Feedback (for testers)" GitHub
+Issue Form (two free-text boxes) instead of writing a ticket by hand; the
+form auto-applies the `feedback-raw` label. `reusable-triage.yml` fires
+on `issues: opened` for that label, sends the raw text plus
+`.claude/ticket-format.md` to a cheap model, and gets back structured
+`{title, body}` JSON only — the LLM has no Bash/`gh` access and cannot
+close, reject, or judge the ticket. A separate deterministic step applies
+the rewrite via `gh issue edit` and flips the label to `feedback-triaged`.
+The prioritizer's board-fetch step drops any item still labeled
+`feedback-raw`, so a ticket is never evaluated until triage has rewritten
+it. From there it flows through the normal pipeline below like any other
+ticket.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -246,6 +261,32 @@ Coding conventions, test commands, branch naming, PR format. The worker reads th
 - All new endpoints need an integration test.
 ```
 
+### 4.5 `.github/workflows/reusable-triage.yml` (central, shared)
+
+Reformats non-technical tester feedback into the ticket shape defined by
+`.claude/ticket-format.md`, before the prioritizer ever considers it.
+
+- Trigger: `issues: opened` where the issue carries label `feedback-raw`
+  (applied automatically by the `.github/ISSUE_TEMPLATE/tester-feedback.yml`
+  form).
+- Model: cheap (`claude-haiku-4-5` by default) — this step only rewrites
+  text, it does not need a strong reasoning model.
+- Tool access: none. No `--allowedTools` is passed, so Bash/`gh` stay
+  denied by default in CI. The model returns structured `{title, body}`
+  JSON via `--json-schema`; a separate deterministic step applies it with
+  one `gh issue edit` call and swaps the label to `feedback-triaged`.
+  There is no `gh issue close` (or delete) anywhere in the workflow — it
+  is structurally, not just by prompt instruction, incapable of killing a
+  ticket.
+- The rewritten body always ends with `## Original report`, quoting the
+  tester's exact original title and body, so nothing is lost in
+  translation and a human can always check the reformatting against the
+  source.
+- Uses `github.token`, not `PROJECT_TOKEN`: it only edits the issue that
+  triggered it, never queries the Projects v2 board. This also means the
+  label swap it performs does not itself trigger a new workflow run
+  (`GITHUB_TOKEN`-authored events don't fire new runs), avoiding a loop.
+
 ## 5. Setup steps
 
 1. In Claude Code terminal, run `/install-github-app` in each target repo. This installs the Claude GitHub App and configures secrets.
@@ -385,8 +426,9 @@ Recommendation: never skip Phase 1. An agent that merges its own unreviewed code
 - `--max-turns` caps on both workflows to bound cost and prevent loops.
 - Worker never opens a PR on failing tests, it comments instead.
 - Path denylist in CLAUDE.md (workflows, infra, migrations) so the agent cannot modify its own automation or sensitive code.
-- Concurrency group on the worker workflow to prevent parallel runs on the same issue.
+- Concurrency group on the worker workflow (and on the triage workflow, per issue) to prevent parallel runs on the same issue.
 - Bot-comment exclusion: prioritizer ignores issues opened by bots to avoid feedback loops.
+- Triage step has no Bash/`gh` access and cannot close, reject, or judge tickets — structural, not policy-enforced. It only ever rewrites title/body and swaps one label.
 
 ## 9. Cost estimate
 
@@ -409,3 +451,5 @@ The action authenticates with a Pro/Max subscription OAuth token (`claude setup-
 - [ ] WIP limit prevents a second dispatch while one is in flight
 - [ ] Worker cannot edit `.github/workflows/`
 - [ ] Scoping test: add an issue from another repo to the board, confirm the prioritizer never selects, comments on, or labels it
+- [ ] Tester-filed feedback (via the issue form) is reformatted into `.claude/ticket-format.md` shape, keeps an intact `## Original report` section, flips to `feedback-triaged`, and is then picked up by the prioritizer like any other ticket
+- [ ] Prioritizer never comments on or selects a ticket still labeled `feedback-raw`

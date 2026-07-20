@@ -42,15 +42,24 @@ gh label create in-review   --repo "$REPO" --color 0E8A16 --description "PR open
 gh label create needs-info  --repo "$REPO" --color D93F0B --description "Blocked; prioritizer asked a question"
 ```
 
+Only needed if you're enabling tester feedback (see step 4 and "Daily use" below):
+
+```bash
+gh label create feedback-raw     --repo "$REPO" --color FBCA04 --description "Raw tester feedback, not yet triaged"
+gh label create feedback-triaged --repo "$REPO" --color C5DEF5 --description "Reformatted into ticket format by triage"
+```
+
 ## 4. Copy the templates
 
 From `templates/` in this repo into the target repo:
 
 | Template | Destination | Edit |
 | --- | --- | --- |
-| `claude-automation.yml` | `.github/workflows/claude-automation.yml` | Replace `your-user` in both `uses:` lines; set `project_owner` (and `owner_type: organization` if applicable). |
+| `claude-automation.yml` | `.github/workflows/claude-automation.yml` | Replace `your-user` in all three `uses:` lines; set `project_owner` (and `owner_type: organization` if applicable). |
 | `.claude/prioritization.md` | `.claude/prioritization.md` | Add project-specific "never pick" rules (payments, auth, data migrations, …). |
 | `CLAUDE.md` | `CLAUDE.md` | Repo structure, how to run lint/tests, path denylist. This file is what makes the worker produce good PRs. |
+| `.claude/ticket-format.md` | `.claude/ticket-format.md` | Optional but recommended: the ticket shape the prioritizer/worker expect, referenced by the triage step. |
+| `.github/ISSUE_TEMPLATE/tester-feedback.yml` | `.github/ISSUE_TEMPLATE/tester-feedback.yml` | Only if enabling tester feedback (see "Daily use"). Free-text form testers use instead of writing a ticket by hand. |
 
 Make sure `.gitignore` does not ignore `.claude/` — narrow it to
 `.claude/settings.local.json` if needed.
@@ -72,6 +81,18 @@ Todo. The cron (07:00/13:00 UTC weekdays) picks at most one ticket,
 labels it `claude-work`, and the worker opens a PR and moves the issue
 to `in-review`. Merge the PR to close the issue. `workflow_dispatch`
 triggers a run any time.
+
+**Tester feedback (optional).** If you've copied `tester-feedback.yml`
+and created the `feedback-raw`/`feedback-triaged` labels, testers can
+file feedback via the repo's "Feedback (for testers)" issue form — plain
+free text, no ticket format required. It's auto-labeled `feedback-raw`;
+the triage step rewrites it into the standard ticket shape (label flips
+to `feedback-triaged`) before the prioritizer ever sees it, and it can
+only rewrite text — it cannot close or reject a ticket. Tester issues
+still need to land on the Project board the same way any other issue
+does: either add them manually, or turn on the board's built-in "auto-add
+items" workflow in the Project's own settings (this repo's automation
+does not do that step for you).
 
 ## Troubleshooting
 

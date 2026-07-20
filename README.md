@@ -13,6 +13,13 @@ copy-pasting orchestration logic:
   dispatches by labeling/commenting on issues.
 - `.github/workflows/reusable-worker.yml` — triggered when an issue is
   labeled `claude-work`; implements it on a branch and opens a PR.
+- `.github/workflows/reusable-triage.yml` — triggered when a new issue
+  carries label `feedback-raw` (applied by the optional
+  `tester-feedback.yml` issue form); rewrites free-text tester feedback
+  into the ticket format the prioritizer/worker expect, using a cheap
+  model with no Bash/`gh` access — it can only rewrite the issue's title
+  and body and swap the label to `feedback-triaged`, never close or judge
+  it. The prioritizer ignores anything still labeled `feedback-raw`.
 
 Both use `anthropics/claude-code-action@v1`, authenticated with a Claude
 subscription OAuth token (no API billing). The model defaults to

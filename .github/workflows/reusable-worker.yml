@@ -6,7 +6,12 @@ on:
       max_turns:
         required: false
         type: number
-        default: 30
+        # The prompt below asks for implement, test, run the suite, open a
+        # PR, then watch CI with up to two fix cycles. Thirty turns cannot
+        # cover that: a NormChat run died at turn 31 having spent $5.90 and
+        # produced nothing, and the two issues that failed were the two
+        # substantial ones. Raise the cap to match the work requested.
+        default: 60
       model:
         required: false
         type: string
@@ -77,8 +82,15 @@ jobs:
               and add "in-review".
           # Bash is disallowed by default in CI; without this whitelist the
           # worker cannot commit, push, test, or open the PR.
+          #
+          # The read-only inspection commands are here because a denial still
+          # costs a turn: one NormChat run spent 6 of its 31 turns on blocked
+          # calls before hitting the cap. Claude Code has native Read and
+          # Grep, but it reaches for the shell equivalents, and refusing them
+          # buys nothing — they cannot modify the checkout. Commands that can
+          # (rm, mv, cp, chmod) are deliberately still absent.
           claude_args: |
             --max-turns ${{ inputs.max_turns }}
             --model ${{ inputs.model }}
             --fallback-model ${{ inputs.fallback_model }}
-            --allowedTools "Bash(git:*),Bash(gh:*),Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(python:*),Bash(python3:*),Bash(pytest:*),Bash(pip:*),Bash(pip3:*),Bash(cd:*),Bash(ls:*),Bash(mkdir:*)"
+            --allowedTools "Bash(git:*),Bash(gh:*),Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(python:*),Bash(python3:*),Bash(pytest:*),Bash(pip:*),Bash(pip3:*),Bash(cd:*),Bash(ls:*),Bash(mkdir:*),Bash(grep:*),Bash(rg:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(find:*),Bash(wc:*),Bash(sed:*),Bash(awk:*),Bash(diff:*),Bash(sort:*),Bash(uniq:*),Bash(echo:*),Bash(pwd:*)"

@@ -14,7 +14,9 @@ on:
       fallback_model:
         required: false
         type: string
-        default: "claude-sonnet-5"
+        # The worker writes code and opens PRs, so when the primary model is
+        # unavailable the better failure is slower and dearer, not weaker.
+        default: "claude-opus-5"
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: true

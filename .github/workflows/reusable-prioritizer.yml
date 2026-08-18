@@ -114,9 +114,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # TEMPORARY (debug): unmask Claude's output so the real cause of the
-          # zero-cost is_error:true aborts is visible. Revert once diagnosed.
-          show_full_output: true
           prompt: |
             Read board.json (GitHub Project items, already scoped to this
             repository) and the policy in .claude/prioritization.md.

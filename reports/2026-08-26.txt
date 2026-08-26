@@ -1,0 +1,122 @@
+CLAUDE AUTOMATION - DAILY REPORT
+Date: 2026-08-26 (UTC)
+Repos reviewed: rocky2397/NormChat
+Verdict: No useful work was done. Both runs today failed at the
+prioritize stage before any ticket was picked; triage and worker
+never ran.
+
+1. SUMMARY
+The system attempted to run twice today and accomplished nothing in
+either attempt: no ticket was labelled claude-work, no PR was opened,
+and no feedback was triaged. Both failures trace to the same root
+cause on the "Prioritize with Claude" step: the account is out of
+usage credits ("You're out of usage credits. Switch to another model
+to continue."), which made Claude return a plain-text refusal instead
+of the required structured_output, tripping the workflow's
+--json-schema check and failing the job. A human manually re-ran the
+job about four hours after the scheduled failure (workflow_dispatch
+at 11:52 UTC) and hit the identical error, confirming the credits
+issue had not been resolved. issues_rocky2397_NormChat.json and
+prs_rocky2397_NormChat.json are both empty, consistent with zero
+ticket movement today.
+
+2. WHAT RAN
+07:50 UTC  rocky2397/NormChat  prioritize (schedule)  FAILURE
+  https://github.com/rocky2397/NormChat/actions/runs/32944744840
+07:50 UTC  rocky2397/NormChat  triage (same run)      SKIPPED
+  https://github.com/rocky2397/NormChat/actions/runs/32944744840
+07:50 UTC  rocky2397/NormChat  work (same run)        SKIPPED
+  https://github.com/rocky2397/NormChat/actions/runs/32944744840
+11:52 UTC  rocky2397/NormChat  prioritize (workflow_dispatch) FAILURE
+  https://github.com/rocky2397/NormChat/actions/runs/32965579783
+11:52 UTC  rocky2397/NormChat  triage (same run)      SKIPPED
+  https://github.com/rocky2397/NormChat/actions/runs/32965579783
+11:52 UTC  rocky2397/NormChat  work (same run)        SKIPPED
+  https://github.com/rocky2397/NormChat/actions/runs/32965579783
+
+3. WHAT FAILED
+
+Stage: prioritize
+Run: https://github.com/rocky2397/NormChat/actions/runs/32944744840
+Error (from errors_rocky2397_NormChat_32944744840.txt):
+  "--json-schema was provided but Claude did not return
+  structured_output. Result subtype: success"
+  "Action failed with error: --json-schema was provided but Claude
+  did not return structured_output. Result subtype: success"
+  "Process completed with exit code 1."
+Reading: The "Prioritize with Claude" step failed after 22 seconds.
+No evidence/claude_*.json capture exists for this run, so the model
+transcript is not directly available, but the identical error text
+and near-identical timing to the 11:52 run (below) indicate the same
+underlying cause: the account was already out of usage credits at
+07:50.
+
+Stage: prioritize
+Run: https://github.com/rocky2397/NormChat/actions/runs/32965579783
+Error (from errors_rocky2397_NormChat_32965579783.txt):
+  "--json-schema was provided but Claude did not return
+  structured_output. Result subtype: success"
+  "Action failed with error: --json-schema was provided but Claude
+  did not return structured_output. Result subtype: success"
+  "Process completed with exit code 1."
+Claude transcript (evidence/claude_rocky2397_NormChat_32965579783.json)
+confirms the root cause directly: a rate_limit_event with
+"status":"rejected", "errorCode":"credits_required",
+"overageDisabledReason":"out_of_credits", followed by the model's
+only output, "You're out of usage credits. Switch to another model
+to continue." (api_error_status 429). The run's own structured log
+(logs/2026-08-26.jsonl) records the same: outcome "error", detail
+"prioritizer did not reach the dispatch step", result_text "You're
+out of usage credits. Switch to another model to continue."
+Reading: The job never reached "Dispatch decision" (that step is
+recorded as skipped), so no ticket was ever evaluated or picked.
+
+4. SILENT FAILURES
+None found today in the strict sense (a green run that did nothing).
+Both prioritize runs are correctly marked conclusion "failure", not
+"success" -- the workflow's --json-schema check did its job and
+surfaced the credits problem loudly rather than swallowing it.
+Downstream triage and work jobs are marked "skipped", which is the
+honest outcome given prioritize never dispatched a decision.
+
+One gap is worth flagging as adjacent to a silent failure: the 07:50
+run (32944744840) has no "Emit run log" or "Upload run log" step in
+its recorded step list -- those steps are supposed to run
+unconditionally (if: always()) per reusable-prioritizer.yml, and did
+run in the 11:52 retry. Because that step never appears to have run
+for the 07:50 attempt, that failure never made it into
+logs/2026-08-26.jsonl or into a captured evidence/claude_*.json file.
+The only reason this report can describe the 07:50 failure at all is
+the separately-collected errors_rocky2397_NormChat_32944744840.txt
+annotation. If that annotation collection ever stops working, a
+failure like this one would leave no trace in the structured logs at
+all.
+
+5. RECURRING PATTERNS
+This is the first report in reports/ (only README.md existed prior
+to today), so no multi-day comparison is possible. Within today
+itself, the same failure (out of usage credits) occurred twice, about
+4 hours apart, with a human-triggered retry hitting the identical
+error -- the underlying account issue was not fixed between attempts.
+
+6. RECOMMENDED FIXES
+1. Restore or top up usage credits for the account behind
+   CLAUDE_CODE_OAUTH_TOKEN used in reusable-prioritizer.yml (and by
+   extension reusable-triage.yml / reusable-worker.yml, which share
+   the same credential path and would fail the same way). This is
+   the single blocker preventing any work today.
+2. In reusable-prioritizer.yml, the "Prioritize with Claude" step
+   already sets --fallback-model; confirm inputs.fallback_model is
+   configured to a model still covered by remaining credits/quota,
+   since the model's own error text ("Switch to another model to
+   continue") suggests a fallback should have been usable here.
+3. In reusable-prioritizer.yml, harden the "Emit run log" step (or
+   add a preceding step) so it does not depend on state that can go
+   missing when "Prioritize with Claude" fails early -- the 07:50 run
+   shows evidence of that step not executing despite if: always(),
+   which is the one path by which a real failure could go completely
+   unlogged.
+4. Consider alerting (e.g. a Slack/webhook step on job failure) so a
+   human notices a credits-exhaustion failure faster than the ~4 hour
+   gap seen between the 07:50 scheduled failure and the 11:52 manual
+   retry.

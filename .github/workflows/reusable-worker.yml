@@ -6,12 +6,15 @@ on:
       max_turns:
         required: false
         type: number
-        # The prompt below asks for implement, test, run the suite, open a
-        # PR, then watch CI with up to two fix cycles. Thirty turns cannot
-        # cover that: a NormChat run died at turn 31 having spent $5.90 and
-        # produced nothing, and the two issues that failed were the two
-        # substantial ones. Raise the cap to match the work requested.
-        default: 60
+        # The prompt asks for implement, test, run the suite, open a PR, then
+        # watch CI with up to two fix cycles. Thirty turns could not cover it
+        # (a run died at turn 31 having spent $5.90) and neither could sixty:
+        # NormChat run 32977148685 hit the cap at turn 61 after 12 minutes
+        # with zero permission denials, so the turns went on real work.
+        # Substantial tickets need room. The incremental-push instruction in
+        # the prompt is the real safety net -- it bounds what a cap costs,
+        # rather than trying to predict a number that is always too small.
+        default: 120
       model:
         required: false
         type: string
@@ -66,13 +69,23 @@ jobs:
             - Follow CLAUDE.md conventions strictly, including the path
               denylist (never modify .github/workflows/, infra/, or
               migrations/).
+            - Before writing any code, create the branch and push it
+              empty. Then commit and push after each meaningful piece of
+              work. This run has a hard turn limit and is killed without
+              warning when it is reached: anything left uncommitted in the
+              runner is destroyed. Two runs have already been lost this way.
+              Never batch all the work into one commit at the end.
             - Make the minimal change that fully resolves the issue.
             - Write or update tests for the change.
-            - Run the test suite. Do not open a PR if tests fail;
-              instead comment on the issue with the failure.
-            - Open a PR titled "fix: <issue title> (#N)" that closes
-              the issue, with a summary of the approach and any
-              tradeoffs.
+            - Run the test suite. Do not mark the PR ready for review if
+              tests fail; leave it as a draft and comment on the issue with
+              the failure.
+            - Open the PR as a draft as soon as the branch has its first
+              real commit, titled "fix: <issue title> (#N)", closing the
+              issue. Keep pushing to it as you go. Mark it ready for review
+              only once the work is complete and the tests pass. A draft PR
+              that dies at the turn limit is recoverable; a lost runner is
+              not.
             - After opening the PR, wait for its CI checks to finish
               with `gh pr checks <PR> --watch`. If a check fails, read
               the failing job's log, fix the underlying issue, and

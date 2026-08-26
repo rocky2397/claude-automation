@@ -114,7 +114,10 @@ Claude opens PRs; a human merges. Never skip this in phase 1 — see
 - `--max-turns` caps on both workflows.
 - Prioritizer and triage keep narrow read-only tool allowlists; only the
   worker bypasses permission checks, and only inside an ephemeral runner.
-- Worker never opens a PR on failing tests; it comments instead.
+- Worker opens its PR as a draft and only marks it ready once tests
+  pass; on failure it stays a draft and the worker comments. It also
+  pushes incrementally, so hitting the turn limit costs the remaining
+  work rather than all of it.
 - Path denylist (`.github/workflows/`, `infra/`, `migrations/`) belongs in
   each target repo's `CLAUDE.md`.
 - Concurrency group on the worker per issue number.

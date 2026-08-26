@@ -59,6 +59,10 @@ jobs:
             "${{ github.event.issue.title }}"
 
             Requirements:
+            - Do the work yourself in this session. Do not delegate to a
+              subagent and do not end your turn waiting on one: this is a
+              non-interactive run, so there is nobody to hand results back
+              to and the job will finish having produced nothing.
             - Follow CLAUDE.md conventions strictly, including the path
               denylist (never modify .github/workflows/, infra/, or
               migrations/).
@@ -97,11 +101,18 @@ jobs:
           # what Claude is instructed to touch. --allowedTools is dropped
           # because it is meaningless once checks are bypassed; leaving it
           # would imply a restriction that is not in force.
+          #
+          # Task is the one tool still blocked. Bypassing permissions made it
+          # available for the first time, and on run 32976749010 the worker
+          # spawned an exploration subagent and ended its turn with "I'll wait
+          # for the exploration agent's findings" -- a green job, 5 turns, no
+          # branch, no PR. There is no interactive caller here to resume it.
           claude_args: |
             --max-turns ${{ inputs.max_turns }}
             --model ${{ inputs.model }}
             --fallback-model ${{ inputs.fallback_model }}
             --dangerously-skip-permissions
+            --disallowedTools "Task"
 
       # Always runs, including when Claude failed. Records what the worker
       # actually produced, so a green-but-empty run is visible in the log.

@@ -44,6 +44,14 @@ jobs:
     if: github.event_name == 'issues' && github.event.label.name == 'claude-work'
     runs-on: ubuntu-latest
     steps:
+      - name: Record job start
+        # The emitter needs a floor for "PRs created by this run". Reading it
+        # from `gh run view` would require actions:read, which callers do not
+        # grant -- the call failed silently on run 32978775586 and the worker
+        # reported no_pr for a PR it had just opened. A local timestamp needs
+        # no permission at all.
+        run: echo "JOB_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -146,18 +154,16 @@ jobs:
           # "#N" rather than merely containing the digits. A bare `in:body`
           # search matched an unrelated two-week-old PR because the issue
           # number appeared somewhere in its prose.
-          RUN_START=$(gh run view "$GITHUB_RUN_ID" --json createdAt \
-                        --jq '.createdAt' 2>/dev/null) || RUN_START=""
-          PR_URL=""
-          if [ -n "$RUN_START" ]; then
-            PR_URL=$(gh pr list --state all --limit 30 \
-                       --json number,url,createdAt,title,body 2>/dev/null \
-                     | jq -r --arg since "$RUN_START" --arg tag "#$ISSUE" \
-                         'map(select(.createdAt >= $since))
-                          | map(select(((.body // "") + " " + (.title // ""))
-                                | test("(^|[^0-9])" + $tag + "([^0-9]|$)")))
-                          | .[0].url // empty') || PR_URL=""
-          fi
+          # Falling back to midnight keeps this from silently degrading into
+          # "no PR" if JOB_START is ever missing.
+          SINCE="${JOB_START:-$(date -u +%Y-%m-%d)T00:00:00Z}"
+          PR_URL=$(gh pr list --state all --limit 30 \
+                     --json number,url,createdAt,title,body 2>/dev/null \
+                   | jq -r --arg since "$SINCE" --arg tag "#$ISSUE" \
+                       'map(select(.createdAt >= $since))
+                        | map(select(((.body // "") + " " + (.title // ""))
+                              | test("(^|[^0-9])" + $tag + "([^0-9]|$)")))
+                        | .[0].url // empty') || PR_URL=""
           LABELS=$(gh issue view "$ISSUE" --json labels \
                    --jq '[.labels[].name] | join(",")' 2>/dev/null) || LABELS=""
 

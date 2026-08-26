@@ -139,19 +139,34 @@ jobs:
             --max-turns ${{ inputs.max_turns }}
             --model ${{ inputs.model }}
             --fallback-model ${{ inputs.fallback_model }}
-            --allowedTools "Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh issue view:*),Bash(git ls-remote:*)"
+            --allowedTools "Read,Glob,Grep,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh issue view:*),Bash(git ls-remote:*)"
             --json-schema '{"type":"object","properties":{"top_pick":{"type":["object","null"],"properties":{"number":{"type":"integer"},"reason":{"type":"string"}},"required":["number","reason"]},"deprioritized":{"type":"array","items":{"type":"object","properties":{"number":{"type":"integer"},"reason":{"type":"string"}},"required":["number","reason"]}},"blocked":{"type":"array","items":{"type":"object","properties":{"number":{"type":"integer"},"question":{"type":"string"}},"required":["number","question"]}}},"required":["top_pick","deprioritized","blocked"]}'
 
       - name: Dispatch decision
         if: fromJSON(steps.wip.outputs.count) < inputs.wip_limit
+        id: dispatch
         run: |
           printf '%s' "$DECISION" > decision.json
           jq . decision.json >/dev/null   # fail loudly on malformed output
 
           TOP=$(jq -r '.top_pick.number // empty' decision.json)
+          N_BLOCKED=$(jq '[.blocked[]?] | length' decision.json)
+          N_DEPRIO=$(jq '[.deprioritized[]?] | length' decision.json)
+
           if [ -n "$TOP" ]; then
+            REASON=$(jq -r '.top_pick.reason' decision.json)
             gh issue edit "$TOP" --add-label "claude-work"
-            gh issue comment "$TOP" --body "Prioritizer selected this ticket. Reason: $(jq -r '.top_pick.reason' decision.json)"
+            gh issue comment "$TOP" --body "Prioritizer selected this ticket. Reason: $REASON"
+            {
+              echo "outcome=picked"
+              echo "issue=$TOP"
+              printf 'detail=picked #%s (%s blocked, %s deprioritized)\n' "$TOP" "$N_BLOCKED" "$N_DEPRIO"
+            } >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "outcome=no_pick"
+              printf 'detail=no ticket ready (%s blocked, %s deprioritized)\n' "$N_BLOCKED" "$N_DEPRIO"
+            } >> "$GITHUB_OUTPUT"
           fi
 
           jq -c '.blocked[]?' decision.json | while read -r item; do
@@ -169,3 +184,102 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           DECISION: ${{ steps.prioritize.outputs.structured_output }}
+
+      # Always runs, including when the Claude step failed or the WIP limit
+      # short-circuited the job. This is what makes a "green run that did
+      # nothing" distinguishable from a green run that actually worked.
+      - name: Emit run log
+        if: always()
+        env:
+          STAGE: prioritize
+          JOB_STATUS: ${{ job.status }}
+          CLAUDE_STEP: ${{ steps.prioritize.outcome }}
+          CLAUDE_EXEC_FILE: ${{ steps.prioritize.outputs.execution_file }}
+          WIP_COUNT: ${{ steps.wip.outputs.count }}
+          WIP_LIMIT: ${{ inputs.wip_limit }}
+          MODEL: ${{ inputs.model }}
+          DISPATCH_OUTCOME: ${{ steps.dispatch.outputs.outcome }}
+          DISPATCH_DETAIL: ${{ steps.dispatch.outputs.detail }}
+          ISSUE: ${{ steps.dispatch.outputs.issue }}
+        run: |
+          if [ "${WIP_COUNT:-0}" -ge "${WIP_LIMIT:-1}" ] 2>/dev/null; then
+            OUTCOME="wip_limit_reached"
+            DETAIL="$WIP_COUNT issue(s) already labelled claude-work; Claude never ran"
+          elif [ -n "$DISPATCH_OUTCOME" ]; then
+            OUTCOME="$DISPATCH_OUTCOME"
+            DETAIL="$DISPATCH_DETAIL"
+          else
+            OUTCOME="error"
+            DETAIL="prioritizer did not reach the dispatch step"
+          fi
+          export OUTCOME DETAIL
+          set -uo pipefail
+          mkdir -p _automation_log
+
+          # The action writes a full SDK message log even when show_full_output
+          # is off, so this captures the real error without spraying secrets
+          # into the public run log.
+          EXEC="${CLAUDE_EXEC_FILE:-}"
+          if [ -z "$EXEC" ] || [ ! -f "$EXEC" ]; then
+            EXEC="$RUNNER_TEMP/claude-execution-output.json"
+          fi
+          RESULT='{}'
+          if [ -f "$EXEC" ]; then
+            cp "$EXEC" _automation_log/claude-execution.json || true
+            RESULT=$(jq -c '(if type=="array" then . else [.] end)
+                            | map(select(.type=="result")) | last // {}' \
+                     "$EXEC" 2>/dev/null) || RESULT='{}'
+            [ -n "$RESULT" ] || RESULT='{}'
+          fi
+
+          jq -n \
+            --arg ts        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg repo      "$GITHUB_REPOSITORY" \
+            --arg stage     "$STAGE" \
+            --arg run_id    "$GITHUB_RUN_ID" \
+            --arg attempt   "$GITHUB_RUN_ATTEMPT" \
+            --arg run_url   "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg trigger   "$GITHUB_EVENT_NAME" \
+            --arg job       "$JOB_STATUS" \
+            --arg step      "${CLAUDE_STEP:-}" \
+            --arg model     "${MODEL:-}" \
+            --arg outcome   "$OUTCOME" \
+            --arg detail    "$DETAIL" \
+            --arg issue     "${ISSUE:-}" \
+            --argjson r     "$RESULT" \
+            '{ts:$ts, repo:$repo, stage:$stage, outcome:$outcome, detail:$detail,
+              issue:(if $issue=="" then null else ($issue|tonumber? // null) end),
+              job_status:$job, claude_step:$step, trigger:$trigger, model:$model,
+              run_id:$run_id, attempt:$attempt, run_url:$run_url,
+              claude:{ran:($r|has("subtype")),
+                      is_error:($r.is_error // null),
+                      subtype:($r.subtype // null),
+                      num_turns:($r.num_turns // null),
+                      duration_ms:($r.duration_ms // null),
+                      permission_denials:($r.permission_denials_count // null),
+                      result_text:($r.result // null)}}' \
+            > _automation_log/event.json
+
+          {
+            echo "### Automation log — \`$STAGE\`"
+            echo
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| outcome | \`$OUTCOME\` |"
+            echo "| detail | $DETAIL |"
+            echo "| job status | $JOB_STATUS |"
+            echo "| claude step | ${CLAUDE_STEP:-n/a} |"
+            jq -r '.claude | to_entries[]
+                   | select(.value != null)
+                   | "| claude." + .key + " | " + (.value|tostring|.[0:300]) + " |"' \
+              _automation_log/event.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: automation-log-prioritize-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _automation_log/
+          retention-days: 90
+          if-no-files-found: warn

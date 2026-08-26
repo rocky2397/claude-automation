@@ -45,7 +45,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: anthropics/claude-code-action@v1
+      - name: Implement with Claude
+        id: implement
+        uses: anthropics/claude-code-action@v1
         env:
           # gh CLI inside Claude's Bash needs a token; the job token has
           # contents/issues/pull-requests write from the caller.
@@ -80,17 +82,131 @@ jobs:
               follow-up.
             - Only once CI is green: remove the "claude-work" label
               and add "in-review".
-          # Bash is disallowed by default in CI; without this whitelist the
-          # worker cannot commit, push, test, or open the PR.
+          # --allowedTools is an allowlist that REPLACES the default tool
+          # set, not an addition to it. Listing only Bash(...) patterns here
+          # silently removed Read/Write/Edit, so the worker could not edit a
+          # single file and every run died on permission denials. Any new
+          # entry must keep the native file tools listed first.
           #
-          # The read-only inspection commands are here because a denial still
-          # costs a turn: one NormChat run spent 6 of its 31 turns on blocked
-          # calls before hitting the cap. Claude Code has native Read and
-          # Grep, but it reaches for the shell equivalents, and refusing them
-          # buys nothing — they cannot modify the checkout. Commands that can
-          # (rm, mv, cp, chmod) are deliberately still absent.
+          # Bash is also disallowed by default in CI; without the whitelist
+          # the worker cannot commit, push, test, or open the PR.
+          #
+          # The read-only inspection commands stay even though Read and Grep
+          # are back, because a denial still costs a turn: one NormChat run
+          # spent 6 of its 31 turns on blocked calls before hitting the cap,
+          # and Claude reaches for the shell equivalents regardless. They
+          # cannot modify the checkout. Commands that can (rm, mv, cp, chmod)
+          # are deliberately still absent.
           claude_args: |
             --max-turns ${{ inputs.max_turns }}
             --model ${{ inputs.model }}
             --fallback-model ${{ inputs.fallback_model }}
-            --allowedTools "Bash(git:*),Bash(gh:*),Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(python:*),Bash(python3:*),Bash(pytest:*),Bash(pip:*),Bash(pip3:*),Bash(cd:*),Bash(ls:*),Bash(mkdir:*),Bash(grep:*),Bash(rg:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(find:*),Bash(wc:*),Bash(sed:*),Bash(awk:*),Bash(diff:*),Bash(sort:*),Bash(uniq:*),Bash(echo:*),Bash(pwd:*)"
+            --allowedTools "Read,Write,Edit,Glob,Grep,TodoWrite,Bash(git:*),Bash(gh:*),Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(python:*),Bash(python3:*),Bash(pytest:*),Bash(pip:*),Bash(pip3:*),Bash(cd:*),Bash(ls:*),Bash(mkdir:*),Bash(grep:*),Bash(rg:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(find:*),Bash(wc:*),Bash(sed:*),Bash(awk:*),Bash(diff:*),Bash(sort:*),Bash(uniq:*),Bash(echo:*),Bash(pwd:*)"
+
+      # Always runs, including when Claude failed. Records what the worker
+      # actually produced, so a green-but-empty run is visible in the log.
+      - name: Emit run log
+        if: always()
+        env:
+          STAGE: work
+          JOB_STATUS: ${{ job.status }}
+          CLAUDE_STEP: ${{ steps.implement.outcome }}
+          CLAUDE_EXEC_FILE: ${{ steps.implement.outputs.execution_file }}
+          MODEL: ${{ inputs.model }}
+          ISSUE: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The worker's real output is a PR, so look for one rather than
+          # trusting the exit code.
+          PR=$(gh pr list --state all --search "${ISSUE} in:body" \
+                 --json number,url,state,createdAt --limit 5 2>/dev/null \
+               | jq -c '[.[]]' ) || PR='[]'
+          PR_URL=$(echo "$PR" | jq -r '.[0].url // empty')
+          LABELS=$(gh issue view "$ISSUE" --json labels \
+                   --jq '[.labels[].name] | join(",")' 2>/dev/null) || LABELS=""
+
+          if [ "$JOB_STATUS" = "success" ] && [ -n "$PR_URL" ]; then
+            OUTCOME="pr_opened"
+            DETAIL="$PR_URL (issue labels: ${LABELS:-none})"
+          elif [ -n "$PR_URL" ]; then
+            OUTCOME="pr_opened_but_job_failed"
+            DETAIL="$PR_URL (issue labels: ${LABELS:-none})"
+          elif [ "$JOB_STATUS" = "success" ]; then
+            OUTCOME="no_pr"
+            DETAIL="job was green but no PR references issue #$ISSUE (labels: ${LABELS:-none})"
+          else
+            OUTCOME="error"
+            DETAIL="worker failed with no PR for issue #$ISSUE (labels: ${LABELS:-none})"
+          fi
+          export OUTCOME DETAIL
+
+          set -uo pipefail
+          mkdir -p _automation_log
+
+          # The action writes a full SDK message log even when show_full_output
+          # is off, so this captures the real error without spraying secrets
+          # into the public run log.
+          EXEC="${CLAUDE_EXEC_FILE:-}"
+          if [ -z "$EXEC" ] || [ ! -f "$EXEC" ]; then
+            EXEC="$RUNNER_TEMP/claude-execution-output.json"
+          fi
+          RESULT='{}'
+          if [ -f "$EXEC" ]; then
+            cp "$EXEC" _automation_log/claude-execution.json || true
+            RESULT=$(jq -c '(if type=="array" then . else [.] end)
+                            | map(select(.type=="result")) | last // {}' \
+                     "$EXEC" 2>/dev/null) || RESULT='{}'
+            [ -n "$RESULT" ] || RESULT='{}'
+          fi
+
+          jq -n \
+            --arg ts        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg repo      "$GITHUB_REPOSITORY" \
+            --arg stage     "$STAGE" \
+            --arg run_id    "$GITHUB_RUN_ID" \
+            --arg attempt   "$GITHUB_RUN_ATTEMPT" \
+            --arg run_url   "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg trigger   "$GITHUB_EVENT_NAME" \
+            --arg job       "$JOB_STATUS" \
+            --arg step      "${CLAUDE_STEP:-}" \
+            --arg model     "${MODEL:-}" \
+            --arg outcome   "$OUTCOME" \
+            --arg detail    "$DETAIL" \
+            --arg issue     "${ISSUE:-}" \
+            --argjson r     "$RESULT" \
+            '{ts:$ts, repo:$repo, stage:$stage, outcome:$outcome, detail:$detail,
+              issue:(if $issue=="" then null else ($issue|tonumber? // null) end),
+              job_status:$job, claude_step:$step, trigger:$trigger, model:$model,
+              run_id:$run_id, attempt:$attempt, run_url:$run_url,
+              claude:{ran:($r|has("subtype")),
+                      is_error:($r.is_error // null),
+                      subtype:($r.subtype // null),
+                      num_turns:($r.num_turns // null),
+                      duration_ms:($r.duration_ms // null),
+                      permission_denials:($r.permission_denials_count // null),
+                      result_text:($r.result // null)}}' \
+            > _automation_log/event.json
+
+          {
+            echo "### Automation log — \`$STAGE\`"
+            echo
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| outcome | \`$OUTCOME\` |"
+            echo "| detail | $DETAIL |"
+            echo "| job status | $JOB_STATUS |"
+            echo "| claude step | ${CLAUDE_STEP:-n/a} |"
+            jq -r '.claude | to_entries[]
+                   | select(.value != null)
+                   | "| claude." + .key + " | " + (.value|tostring|.[0:300]) + " |"' \
+              _automation_log/event.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: automation-log-work-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _automation_log/
+          retention-days: 90
+          if-no-files-found: warn

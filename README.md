@@ -26,6 +26,52 @@ subscription OAuth token (no API billing). The model defaults to
 `claude-fable-5` with `claude-sonnet-5` as automatic fallback; both are
 overridable per repo via the `model` and `fallback_model` inputs.
 
+## Run log and nightly report
+
+Every job in all three reusable workflows ends with an `if: always()` **Emit
+run log** step. It records a semantic `outcome` — what the job actually
+accomplished — alongside GitHub's own exit code, and uploads it as an
+`automation-log-*` artifact together with the Claude SDK message log. This
+distinction matters: a prioritizer run that short-circuits on the WIP limit
+and a worker run that opens no PR both report `conclusion: success`, and
+without the `outcome` field they are indistinguishable from real work.
+
+`.github/workflows/nightly-report.yml` runs here at 21:00 UTC daily. It walks
+every repo in the `AUTOMATION_REPOS` variable, collects that day's runs,
+artifacts, error annotations, and issue/PR movement, then has Claude write a
+plain-text review to `reports/YYYY-MM-DD.txt`. The raw events land in
+`logs/YYYY-MM-DD.jsonl`. Both are committed to this repo.
+
+The report has a fixed shape; section 4, **silent failures**, is the one to
+read first — jobs that went green while accomplishing nothing. If the reviewer
+step itself fails, a mechanical fallback report is written from the same
+evidence, so no day goes unrecorded.
+
+This repo needs two secrets of its own for the nightly job:
+`CLAUDE_CODE_OAUTH_TOKEN` and `PROJECT_TOKEN` (the classic PAT, used to read
+runs and artifacts across target repos). Add a repo to the review with:
+
+```bash
+gh variable set AUTOMATION_REPOS --repo <you>/claude-automation \
+  --body "<you>/repo-a <you>/repo-b"
+```
+
+Run it for a past day, or re-run a day, with:
+
+```bash
+gh workflow run nightly-report.yml --repo <you>/claude-automation -f date=2026-08-26
+```
+
+## `--allowedTools` is an allowlist, not an addition
+
+The single most damaging bug this system has had: `--allowedTools` **replaces**
+the default tool set rather than extending it. Listing only `Bash(...)`
+patterns removed `Read`, `Write`, and `Edit`, so the prioritizer could not read
+its own `board.json` and the worker could not edit a file. Both failed on every
+run for four weeks while the board sat idle. Any edit to an `--allowedTools`
+list must keep the file tools (`Read,Glob,Grep`, plus `Write,Edit` for the
+worker) listed first.
+
 ## Installing in a target repo
 
 See [INSTALL.md](INSTALL.md) for the full per-repo checklist with commands
@@ -58,3 +104,5 @@ Claude opens PRs; a human merges. Never skip this in phase 1 — see
 - Concurrency group on the worker per issue number.
 - Board items are filtered to the calling repo, and bot-authored issues are
   dropped, before Claude ever sees them.
+- Every job emits a semantic outcome to the run log, so a green run that did
+  no work is visible rather than silent.

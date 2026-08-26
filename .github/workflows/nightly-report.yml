@@ -1,0 +1,294 @@
+name: Nightly Automation Report
+
+# Reviews everything the automation did across every target repo for one day
+# and writes a plain-text report. Runs after the last weekday prioritizer slot
+# (13:00 UTC) so a full day of activity is captured.
+
+on:
+  schedule:
+    - cron: "0 21 * * *"   # 21:00 UTC daily
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Day to review (YYYY-MM-DD, UTC). Defaults to today."
+        required: false
+        type: string
+      repos:
+        description: "Space-separated owner/repo list. Defaults to vars.AUTOMATION_REPOS."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: nightly-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve target day and repos
+        id: cfg
+        run: |
+          DAY="${{ inputs.date }}"
+          [ -n "$DAY" ] || DAY=$(date -u +%F)
+          echo "$DAY" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || {
+            echo "::error::date must be YYYY-MM-DD, got '$DAY'"; exit 1; }
+
+          REPOS="${{ inputs.repos }}"
+          [ -n "$REPOS" ] || REPOS="${{ vars.AUTOMATION_REPOS }}"
+          if [ -z "$REPOS" ]; then
+            echo "::error::No target repos. Set the AUTOMATION_REPOS variable on this repo, e.g. \"owner/repo-a owner/repo-b\"."
+            exit 1
+          fi
+
+          echo "day=$DAY" >> "$GITHUB_OUTPUT"
+          echo "repos=$REPOS" >> "$GITHUB_OUTPUT"
+          echo "Reviewing $DAY across: $REPOS"
+
+      - name: Collect the day's evidence
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          DAY: ${{ steps.cfg.outputs.day }}
+          REPOS: ${{ steps.cfg.outputs.repos }}
+        run: |
+          set -uo pipefail
+          mkdir -p evidence
+          : > evidence/events.jsonl
+
+          for REPO in $REPOS; do
+            SLUG=$(echo "$REPO" | tr '/' '_')
+            echo "::group::$REPO"
+
+            # Every workflow run that started on the target day.
+            gh run list --repo "$REPO" --created "$DAY" --limit 100 \
+              --json databaseId,workflowName,event,status,conclusion,createdAt,updatedAt,displayTitle,url,headBranch \
+              > "evidence/runs_$SLUG.json" 2>/dev/null || echo '[]' > "evidence/runs_$SLUG.json"
+
+            # Per-run detail. Step-level conclusions are what expose a job that
+            # went green only because its real work was skipped.
+            jq -r '.[].databaseId' "evidence/runs_$SLUG.json" | while read -r RID; do
+              gh run view "$RID" --repo "$REPO" \
+                --json databaseId,workflowName,event,conclusion,createdAt,url,jobs \
+                > "evidence/run_${SLUG}_${RID}.json" 2>/dev/null || continue
+
+              # Structured events emitted by the reusable workflows.
+              rm -rf "_dl"; mkdir -p "_dl"
+              if gh run download "$RID" --repo "$REPO" --pattern 'automation-log-*' \
+                   --dir "_dl" >/dev/null 2>&1; then
+                find "_dl" -name event.json -print0 | while IFS= read -r -d '' f; do
+                  jq -c '.' "$f" >> evidence/events.jsonl 2>/dev/null || true
+                done
+                # Full SDK message logs carry the real error text when a run
+                # failed; keep them only for failures to bound report size.
+                if [ "$(jq -r --arg r "$RID" '.[]|select((.databaseId|tostring)==$r)|.conclusion' "evidence/runs_$SLUG.json")" = "failure" ]; then
+                  find "_dl" -name claude-execution.json -print0 | while IFS= read -r -d '' f; do
+                    jq -c '(if type=="array" then . else [.] end)
+                           | map(select(.type=="result" or .type=="system" or (.is_error==true)))' \
+                      "$f" > "evidence/claude_${SLUG}_${RID}.json" 2>/dev/null || true
+                  done
+                fi
+              fi
+
+              # Runner-side error annotations, for failures the emitter cannot
+              # see (setup errors, startup_failure, cancelled jobs).
+              CONC=$(jq -r --arg r "$RID" '.[]|select((.databaseId|tostring)==$r)|.conclusion' "evidence/runs_$SLUG.json")
+              if [ "$CONC" = "failure" ]; then
+                gh run view "$RID" --repo "$REPO" --log-failed 2>/dev/null \
+                  | grep -aE '##\[error\]' | head -30 \
+                  > "evidence/errors_${SLUG}_${RID}.txt" || true
+              fi
+            done
+            rm -rf "_dl"
+
+            # Ticket and PR movement for the day, so the report can say whether
+            # the automation actually shipped anything.
+            gh issue list --repo "$REPO" --state all --limit 100 \
+              --search "updated:$DAY" \
+              --json number,title,state,labels,updatedAt,url,author \
+              > "evidence/issues_$SLUG.json" 2>/dev/null || echo '[]' > "evidence/issues_$SLUG.json"
+
+            gh pr list --repo "$REPO" --state all --limit 100 \
+              --search "updated:$DAY" \
+              --json number,title,state,isDraft,mergedAt,createdAt,updatedAt,url,headRefName \
+              > "evidence/prs_$SLUG.json" 2>/dev/null || echo '[]' > "evidence/prs_$SLUG.json"
+
+            echo "::endgroup::"
+          done
+
+          echo "Collected: $(wc -l < evidence/events.jsonl) structured events, $(find evidence -type f | wc -l) files"
+
+      - name: Persist the raw day log
+        if: always()
+        env:
+          DAY: ${{ steps.cfg.outputs.day }}
+        run: |
+          mkdir -p logs
+          # Idempotent: re-running for the same day replaces that day's log
+          # rather than duplicating events. Runs even after a partial collect,
+          # so a crash mid-collection still records what was gathered.
+          if [ -s evidence/events.jsonl ]; then
+            sort -u evidence/events.jsonl > "logs/$DAY.jsonl"
+          else
+            : > "logs/$DAY.jsonl"
+          fi
+          wc -l "logs/$DAY.jsonl"
+
+      - name: Review the day with Claude
+        id: review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            You are reviewing one day of an autonomous ticket-handling system.
+            The day under review is ${{ steps.cfg.outputs.day }} (UTC), across
+            these repos: ${{ steps.cfg.outputs.repos }}.
+
+            How the system works: a prioritizer picks at most one ticket from a
+            Project board and labels it `claude-work`; a worker implements that
+            ticket and opens a PR; a triage stage rewrites raw tester feedback
+            into ticket format. A human merges every PR.
+
+            Evidence available to you:
+            - `logs/${{ steps.cfg.outputs.day }}.jsonl` — one structured event
+              per instrumented job. Fields: `stage`, `outcome`, `detail`,
+              `job_status`, `claude.*` (is_error, num_turns, permission_denials,
+              result_text), `run_url`.
+            - `evidence/runs_*.json` — every workflow run that day.
+            - `evidence/run_*_*.json` — per-run job and step conclusions.
+            - `evidence/errors_*_*.txt` — runner error annotations for failures.
+            - `evidence/claude_*_*.json` — SDK message logs for failed runs.
+            - `evidence/issues_*.json`, `evidence/prs_*.json` — ticket/PR movement.
+            - `reports/` — previous days' reports, for spotting repeats.
+
+            Read the evidence, then write a plain-text report to
+            `reports/${{ steps.cfg.outputs.day }}.txt`. Plain text only: no
+            Markdown syntax, no backticks, no bullets beyond "- ", hard-wrapped
+            at 78 columns. Use exactly these sections:
+
+            CLAUDE AUTOMATION - DAILY REPORT
+            Date, repos reviewed, and a one-line verdict.
+
+            1. SUMMARY
+            Three to five sentences. Lead with whether the system did useful
+            work today, not with how many runs there were.
+
+            2. WHAT RAN
+            Chronological. One line per job: time, repo, stage, outcome, and
+            the run URL.
+
+            3. WHAT FAILED
+            One block per distinct failure: stage, run URL, the actual error
+            text, and your best reading of the cause. Quote the real error;
+            never paraphrase it away.
+
+            4. SILENT FAILURES
+            The most important section. List jobs that reported success but
+            accomplished nothing: a prioritizer that skipped on the WIP limit,
+            a worker that opened no PR, triage that left an issue labelled
+            feedback-raw, a ticket picked but never implemented. A green run
+            that did no work belongs here, not in section 2.
+
+            5. RECURRING PATTERNS
+            Compare against the reports already in `reports/`. Say how many
+            consecutive days each failure has occurred. If today is the first
+            report, say so.
+
+            6. RECOMMENDED FIXES
+            Ranked, concrete, and specific: name the file and the change. Skip
+            anything you cannot support from the evidence.
+
+            Rules:
+            - Base every statement on the evidence files. Never invent a run,
+              an error, or a URL.
+            - If the evidence is empty or thin, say so plainly and keep the
+              report short. Do not pad.
+            - Judge outcomes, not exit codes. `conclusion: success` on a job
+              whose real step was skipped is not a success.
+            - Write for someone who has not looked at the runs.
+
+            Write only that one file. Do not modify anything else.
+          claude_args: |
+            --max-turns ${{ vars.REPORT_MAX_TURNS || 40 }}
+            --model ${{ vars.REPORT_MODEL || 'claude-sonnet-5' }}
+            --fallback-model claude-fable-5
+            --allowedTools "Read,Write,Glob,Grep"
+
+      - name: Fall back to a raw report if Claude produced none
+        if: always()
+        env:
+          DAY: ${{ steps.cfg.outputs.day }}
+          REPOS: ${{ steps.cfg.outputs.repos }}
+          REVIEW: ${{ steps.review.outcome }}
+        run: |
+          mkdir -p reports
+          if [ -s "reports/$DAY.txt" ]; then
+            echo "Report written by Claude."
+            exit 0
+          fi
+          # The reviewer itself can fail. A day must never go unrecorded, so
+          # emit a mechanical report from the same evidence.
+          {
+            echo "CLAUDE AUTOMATION - DAILY REPORT"
+            echo "Date:  $DAY"
+            echo "Repos: $REPOS"
+            echo "Verdict: REVIEW STEP FAILED ($REVIEW) - mechanical fallback below."
+            echo
+            echo "1. SUMMARY"
+            echo "The nightly reviewer did not produce a report. The raw events"
+            echo "for the day are listed below and in logs/$DAY.jsonl."
+            echo
+            echo "2. WHAT RAN"
+            if [ -s "logs/$DAY.jsonl" ]; then
+              jq -r '"- " + .ts + "  " + .repo + "  " + .stage +
+                     "  outcome=" + .outcome + "  job=" + .job_status +
+                     "\n  " + .detail + "\n  " + .run_url' "logs/$DAY.jsonl"
+            else
+              echo "- No structured events were collected."
+            fi
+            echo
+            echo "3. WHAT FAILED"
+            for f in evidence/errors_*.txt; do
+              [ -e "$f" ] || { echo "- No runner error annotations."; break; }
+              echo "-- $f"
+              sed 's/^/   /' "$f"
+            done
+          } > "reports/$DAY.txt"
+          echo "Wrote mechanical fallback report."
+
+      - name: Commit report and log
+        if: always()
+        env:
+          DAY: ${{ steps.cfg.outputs.day }}
+        run: |
+          [ -s "reports/$DAY.txt" ] || { echo "Nothing to commit."; exit 0; }
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "reports/$DAY.txt"
+          [ -f "logs/$DAY.jsonl" ] && git add "logs/$DAY.jsonl" || true
+          git diff --cached --quiet && { echo "No changes."; exit 0; }
+          git commit -m "Automation report for $DAY"
+          # The scheduled run and a manual re-run can race on the same branch.
+          for _ in 1 2 3; do
+            git push && exit 0
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
+          done
+          echo "::error::Could not push the report after 3 attempts."
+          exit 1
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: automation-report-${{ steps.cfg.outputs.day }}
+          path: |
+            reports/
+            logs/
+            evidence/
+          retention-days: 30
+          if-no-files-found: warn

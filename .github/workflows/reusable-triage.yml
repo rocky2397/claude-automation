@@ -76,9 +76,11 @@ jobs:
             --max-turns ${{ inputs.max_turns }}
             --model ${{ inputs.model }}
             --fallback-model ${{ inputs.fallback_model }}
+            --allowedTools "Read,Glob,Grep"
             --json-schema '{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"}},"required":["title","body"]}'
 
       - name: Apply reformatted ticket
+        id: apply
         run: |
           printf '%s' "$TRIAGE" > triage.json
           jq . triage.json >/dev/null   # fail loudly on malformed output
@@ -91,6 +93,9 @@ jobs:
             --body "$BODY" \
             --add-label "feedback-triaged" \
             --remove-label "feedback-raw"
+
+          echo "outcome=retriaged" >> "$GITHUB_OUTPUT"
+          printf 'detail=rewritten as: %s\n' "${TITLE:0:120}" >> "$GITHUB_OUTPUT"
         env:
           # github.token (not PROJECT_TOKEN) is deliberate: this job never
           # queries Projects v2, only edits the issue that triggered it.
@@ -98,3 +103,95 @@ jobs:
           # runs, so this label swap can't re-fire this workflow.
           GH_TOKEN: ${{ github.token }}
           TRIAGE: ${{ steps.triage.outputs.structured_output }}
+
+      - name: Emit run log
+        if: always()
+        env:
+          STAGE: triage
+          JOB_STATUS: ${{ job.status }}
+          CLAUDE_STEP: ${{ steps.triage.outcome }}
+          CLAUDE_EXEC_FILE: ${{ steps.triage.outputs.execution_file }}
+          MODEL: ${{ inputs.model }}
+          ISSUE: ${{ github.event.issue.number }}
+          APPLY_OUTCOME: ${{ steps.apply.outputs.outcome }}
+          APPLY_DETAIL: ${{ steps.apply.outputs.detail }}
+        run: |
+          if [ -n "$APPLY_OUTCOME" ]; then
+            OUTCOME="$APPLY_OUTCOME"
+            DETAIL="$APPLY_DETAIL"
+          else
+            OUTCOME="error"
+            DETAIL="issue #$ISSUE was never rewritten; it is still labelled feedback-raw and the prioritizer will keep ignoring it"
+          fi
+          export OUTCOME DETAIL
+
+          set -uo pipefail
+          mkdir -p _automation_log
+
+          # The action writes a full SDK message log even when show_full_output
+          # is off, so this captures the real error without spraying secrets
+          # into the public run log.
+          EXEC="${CLAUDE_EXEC_FILE:-}"
+          if [ -z "$EXEC" ] || [ ! -f "$EXEC" ]; then
+            EXEC="$RUNNER_TEMP/claude-execution-output.json"
+          fi
+          RESULT='{}'
+          if [ -f "$EXEC" ]; then
+            cp "$EXEC" _automation_log/claude-execution.json || true
+            RESULT=$(jq -c '(if type=="array" then . else [.] end)
+                            | map(select(.type=="result")) | last // {}' \
+                     "$EXEC" 2>/dev/null) || RESULT='{}'
+            [ -n "$RESULT" ] || RESULT='{}'
+          fi
+
+          jq -n \
+            --arg ts        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg repo      "$GITHUB_REPOSITORY" \
+            --arg stage     "$STAGE" \
+            --arg run_id    "$GITHUB_RUN_ID" \
+            --arg attempt   "$GITHUB_RUN_ATTEMPT" \
+            --arg run_url   "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg trigger   "$GITHUB_EVENT_NAME" \
+            --arg job       "$JOB_STATUS" \
+            --arg step      "${CLAUDE_STEP:-}" \
+            --arg model     "${MODEL:-}" \
+            --arg outcome   "$OUTCOME" \
+            --arg detail    "$DETAIL" \
+            --arg issue     "${ISSUE:-}" \
+            --argjson r     "$RESULT" \
+            '{ts:$ts, repo:$repo, stage:$stage, outcome:$outcome, detail:$detail,
+              issue:(if $issue=="" then null else ($issue|tonumber? // null) end),
+              job_status:$job, claude_step:$step, trigger:$trigger, model:$model,
+              run_id:$run_id, attempt:$attempt, run_url:$run_url,
+              claude:{ran:($r|has("subtype")),
+                      is_error:($r.is_error // null),
+                      subtype:($r.subtype // null),
+                      num_turns:($r.num_turns // null),
+                      duration_ms:($r.duration_ms // null),
+                      permission_denials:($r.permission_denials_count // null),
+                      result_text:($r.result // null)}}' \
+            > _automation_log/event.json
+
+          {
+            echo "### Automation log — \`$STAGE\`"
+            echo
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| outcome | \`$OUTCOME\` |"
+            echo "| detail | $DETAIL |"
+            echo "| job status | $JOB_STATUS |"
+            echo "| claude step | ${CLAUDE_STEP:-n/a} |"
+            jq -r '.claude | to_entries[]
+                   | select(.value != null)
+                   | "| claude." + .key + " | " + (.value|tostring|.[0:300]) + " |"' \
+              _automation_log/event.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: automation-log-triage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _automation_log/
+          retention-days: 90
+          if-no-files-found: warn

@@ -94,6 +94,33 @@ does: either add them manually, or turn on the board's built-in "auto-add
 items" workflow in the Project's own settings (this repo's automation
 does not do that step for you).
 
+## Nightly report setup (once, on the central repo)
+
+The per-repo steps above are all the automation needs to run. The nightly
+review is separate and lives entirely in `claude-automation`:
+
+```bash
+CENTRAL="<you>/claude-automation"
+
+# Which repos the report covers (space-separated).
+gh variable set AUTOMATION_REPOS --repo "$CENTRAL" --body "<you>/repo-a <you>/repo-b"
+
+# The same two secrets the target repos use. PROJECT_TOKEN needs the classic
+# PAT here too: it reads workflow runs and downloads artifacts cross-repo.
+printf '%s' '<sk-ant-oat01-...>' | gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo "$CENTRAL"
+printf '%s' '<ghp_...>'          | gh secret set PROJECT_TOKEN --repo "$CENTRAL"
+
+# Smoke-test against today.
+gh workflow run nightly-report.yml --repo "$CENTRAL"
+```
+
+Reports land in `reports/YYYY-MM-DD.txt`, raw events in
+`logs/YYYY-MM-DD.jsonl`, both committed to the central repo. Re-running the
+same day overwrites that day rather than appending.
+
+Optional overrides, as repo variables on the central repo: `REPORT_MODEL`
+(default `claude-sonnet-5`) and `REPORT_MAX_TURNS` (default `40`).
+
 ## Troubleshooting
 
 - **`startup_failure` with no logs or annotations** — the caller jobs are
@@ -109,7 +136,17 @@ does not do that step for you).
 - **Prioritizer never picks a ticket that is on the board** — the issue
   lives in a different repo than the one the workflow runs in; transfer
   it (`gh issue transfer`).
-- **Worker run is green but no PR appears** — Bash tools were denied.
-  The reusable worker whitelists git/gh/npm/pytest via `--allowedTools`;
-  if the project needs other CLIs (e.g. `cargo`, `go`), extend that list
-  in `reusable-worker.yml`.
+- **Worker run is green but no PR appears** — tools were denied. Check the
+  run's job summary or `logs/*.jsonl` for `claude.permission_denials`; a
+  non-zero count names the cause. Remember that `--allowedTools` *replaces*
+  the default tool set: the list must keep `Read,Write,Edit,Glob,Grep` as
+  well as the Bash patterns. If the project needs another CLI (e.g. `cargo`,
+  `go`), extend the list in `reusable-worker.yml` without dropping those.
+- **Prioritizer fails with `--json-schema was provided but Claude did not
+  return structured_output`** — same cause. A `result` block showing
+  `num_turns: 1` with `is_error: true` means Claude died before doing any
+  work, usually because it was told to read a file it had no `Read` tool for.
+- **Every scheduled run is green but nothing ever gets picked** — the WIP
+  limit is short-circuiting the job. An open issue still labelled
+  `claude-work` blocks all future picks. The run log records this as
+  `outcome: wip_limit_reached` rather than letting it pass as a success.

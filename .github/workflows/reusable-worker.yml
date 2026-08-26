@@ -117,11 +117,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # The worker's real output is a PR, so look for one rather than
-          # trusting the exit code.
-          PR=$(gh pr list --state all --search "${ISSUE} in:body" \
-                 --json number,url,state,createdAt --limit 5 2>/dev/null \
-               | jq -c '[.[]]' ) || PR='[]'
-          PR_URL=$(echo "$PR" | jq -r '.[0].url // empty')
+          # trusting the exit code. Two conditions, both required: the PR was
+          # created after this run started, and it references the issue as
+          # "#N" rather than merely containing the digits. A bare `in:body`
+          # search matched an unrelated two-week-old PR because the issue
+          # number appeared somewhere in its prose.
+          RUN_START=$(gh run view "$GITHUB_RUN_ID" --json createdAt \
+                        --jq '.createdAt' 2>/dev/null) || RUN_START=""
+          PR_URL=""
+          if [ -n "$RUN_START" ]; then
+            PR_URL=$(gh pr list --state all --limit 30 \
+                       --json number,url,createdAt,title,body 2>/dev/null \
+                     | jq -r --arg since "$RUN_START" --arg tag "#$ISSUE" \
+                         'map(select(.createdAt >= $since))
+                          | map(select(((.body // "") + " " + (.title // ""))
+                                | test("(^|[^0-9])" + $tag + "([^0-9]|$)")))
+                          | .[0].url // empty') || PR_URL=""
+          fi
           LABELS=$(gh issue view "$ISSUE" --json labels \
                    --jq '[.labels[].name] | join(",")' 2>/dev/null) || LABELS=""
 

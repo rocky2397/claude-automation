@@ -102,7 +102,10 @@ Claude opens PRs; a human merges. Never skip this in phase 1 — see
 - Path denylist (`.github/workflows/`, `infra/`, `migrations/`) belongs in
   each target repo's `CLAUDE.md`.
 - Concurrency group on the worker per issue number.
-- Board items are filtered to the calling repo, and bot-authored issues are
-  dropped, before Claude ever sees them.
+- Board items are filtered to the calling repo, and closed issues plus
+  bot-authored issues are dropped, before Claude ever sees them. The
+  closed-issue filter matters more than it looks: a board's Status field does
+  not update when a PR closes an issue, so without it the prioritizer picks
+  work that already shipped.
 - Every job emits a semantic outcome to the run log, so a green run that did
   no work is visible rather than silent.

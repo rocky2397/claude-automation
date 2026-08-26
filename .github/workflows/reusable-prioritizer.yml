@@ -73,7 +73,7 @@ jobs:
                       }
                       content {
                         ... on Issue {
-                          number title body url updatedAt
+                          number title body url updatedAt state
                           repository { nameWithOwner }
                           labels(first: 10) { nodes { name } }
                           assignees(first: 5) { nodes { login } }
@@ -87,15 +87,26 @@ jobs:
             }" -f owner="$PROJECT_OWNER" -F number="$PROJECT_NUMBER" > raw_board.json
 
           # Scoping filter (mandatory): only items whose issue belongs to this repo,
-          # drop bot-authored issues, and drop untriaged tester feedback (label
-          # feedback-raw) so the prioritizer never double-handles a ticket that
-          # reusable-triage.yml is about to rewrite.
+          # drop closed issues, drop bot-authored issues, and drop untriaged
+          # tester feedback (label feedback-raw) so the prioritizer never
+          # double-handles a ticket that reusable-triage.yml is about to rewrite.
+          #
+          # The closed-issue filter is not optional. A board's Status field goes
+          # stale the moment a PR closes an issue -- the item sits at "Todo"
+          # forever unless someone moves it by hand. Without this, the
+          # prioritizer reads Status and happily picks work that already
+          # shipped: on 2026-08-26 it selected closed issue #8 and deprioritized
+          # closed #1, #9 and #10 while ignoring the one genuinely open ticket.
           jq --arg repo "$GITHUB_REPOSITORY" --arg root "$QUERY_ROOT" \
             '[.data[$root].projectV2.items.nodes[]
               | select(.content.repository.nameWithOwner == $repo)
+              | select(.content.state == "OPEN")
               | select((.content.author.login // "") | endswith("[bot]") | not)
               | select(((.content.labels.nodes // []) | map(.name)) | index("feedback-raw") | not)]' \
             raw_board.json > board.json
+
+          echo "Board items after filtering: $(jq 'length' board.json)"
+          jq -r '.[] | "  #\(.content.number) [\(.fieldValueByName.name // "no status")] \(.content.title)"' board.json
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PROJECT_OWNER: ${{ inputs.project_owner }}

@@ -208,6 +208,12 @@ jobs:
             Rules:
             - Base every statement on the evidence files. Never invent a run,
               an error, or a URL.
+            - Separate what the evidence shows from what you infer. State a
+              cause as fact only when an evidence file says so; otherwise mark
+              it "Hypothesis:" and name the evidence that would confirm it.
+              You cannot see commit times, workflow refs, or what changed
+              between runs, so a config explanation for a behaviour change is
+              always a hypothesis, never a finding.
             - If the evidence is empty or thin, say so plainly and keep the
               report short. Do not pad.
             - Judge outcomes, not exit codes. `conclusion: success` on a job

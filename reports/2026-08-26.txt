@@ -1,122 +1,178 @@
 CLAUDE AUTOMATION - DAILY REPORT
 Date: 2026-08-26 (UTC)
 Repos reviewed: rocky2397/NormChat
-Verdict: No useful work was done. Both runs today failed at the
-prioritize stage before any ticket was picked; triage and worker
-never ran.
+Verdict: No useful work shipped today. Two runs failed outright on an
+exhausted credits account, a human patched the model config by hand,
+and the first run after that patch reported "picked" but actually
+labelled and commented on an issue that was already closed. Zero PRs
+opened, zero real tickets progressed.
 
 1. SUMMARY
-The system attempted to run twice today and accomplished nothing in
-either attempt: no ticket was labelled claude-work, no PR was opened,
-and no feedback was triaged. Both failures trace to the same root
-cause on the "Prioritize with Claude" step: the account is out of
-usage credits ("You're out of usage credits. Switch to another model
-to continue."), which made Claude return a plain-text refusal instead
-of the required structured_output, tripping the workflow's
---json-schema check and failing the job. A human manually re-ran the
-job about four hours after the scheduled failure (workflow_dispatch
-at 11:52 UTC) and hit the identical error, confirming the credits
-issue had not been resolved. issues_rocky2397_NormChat.json and
-prs_rocky2397_NormChat.json are both empty, consistent with zero
-ticket movement today.
+The prioritizer ran four times today and never produced a PR (evidence
+/prs_rocky2397_NormChat.json is an empty array). The first two runs
+(07:50 and 11:52 UTC) failed before reaching a decision because the
+account was out of usage credits on claude-fable-5. A human then
+pushed a commit at 12:11 UTC switching the prioritizer and worker off
+claude-fable-5, and the very next run (12:13 UTC) reported a clean
+"picked #8" outcome -- but issue #8, along with #9 and #10 that the
+same run reasoned about, was already closed; the project board's
+Status field was stale and nothing filtered closed issues out before
+Claude saw them. The pick added a "claude-work" label and a comment to
+a dead issue, consumed the run's WIP slot, and triggered no worker run
+at all. Three minutes later the board was clean and a second run
+correctly returned no_pick. No triage activity occurred today because
+no feedback-raw issue was opened.
 
 2. WHAT RAN
-07:50 UTC  rocky2397/NormChat  prioritize (schedule)  FAILURE
+07:50 UTC  rocky2397/NormChat  prioritize (schedule)          FAILURE
   https://github.com/rocky2397/NormChat/actions/runs/32944744840
-07:50 UTC  rocky2397/NormChat  triage (same run)      SKIPPED
+07:50 UTC  rocky2397/NormChat  triage (same run)               SKIPPED
   https://github.com/rocky2397/NormChat/actions/runs/32944744840
-07:50 UTC  rocky2397/NormChat  work (same run)        SKIPPED
+07:50 UTC  rocky2397/NormChat  work (same run)                 SKIPPED
   https://github.com/rocky2397/NormChat/actions/runs/32944744840
-11:52 UTC  rocky2397/NormChat  prioritize (workflow_dispatch) FAILURE
+11:52 UTC  rocky2397/NormChat  prioritize (workflow_dispatch)  FAILURE
   https://github.com/rocky2397/NormChat/actions/runs/32965579783
-11:52 UTC  rocky2397/NormChat  triage (same run)      SKIPPED
+11:52 UTC  rocky2397/NormChat  triage (same run)               SKIPPED
   https://github.com/rocky2397/NormChat/actions/runs/32965579783
-11:52 UTC  rocky2397/NormChat  work (same run)        SKIPPED
+11:52 UTC  rocky2397/NormChat  work (same run)                 SKIPPED
   https://github.com/rocky2397/NormChat/actions/runs/32965579783
+12:11 UTC  rocky2397/NormChat  CI (push, human commit "Switch
+           the prioritizer and worker off claude-fable-5")     SUCCESS
+  https://github.com/rocky2397/NormChat/actions/runs/32967231759
+12:11 UTC  rocky2397/NormChat  prioritize (workflow_dispatch)  SUCCESS
+           (picked already-closed issue #8; see section 4)
+  https://github.com/rocky2397/NormChat/actions/runs/32967256708
+12:11 UTC  rocky2397/NormChat  triage (same run)               SKIPPED
+  https://github.com/rocky2397/NormChat/actions/runs/32967256708
+12:11 UTC  rocky2397/NormChat  work (same run)                 SKIPPED
+  https://github.com/rocky2397/NormChat/actions/runs/32967256708
+12:16 UTC  rocky2397/NormChat  prioritize (workflow_dispatch)  SUCCESS
+           (no_pick, board empty)
+  https://github.com/rocky2397/NormChat/actions/runs/32967667037
+12:16 UTC  rocky2397/NormChat  triage (same run)               SKIPPED
+  https://github.com/rocky2397/NormChat/actions/runs/32967667037
+12:16 UTC  rocky2397/NormChat  work (same run)                 SKIPPED
+  https://github.com/rocky2397/NormChat/actions/runs/32967667037
+
+Note: the "triage" and "work" jobs live in the same "Claude Automation"
+workflow file as "prioritize" but only run on an "issues" event
+(labelled claude-work or feedback-raw); every run today was triggered
+by "schedule" or "workflow_dispatch", so those two jobs being skipped
+in each run above is expected wiring, not a fault by itself. What is
+a fault is that adding the claude-work label to issue #8 at 12:13
+never produced a separate "issues"-triggered run anywhere in
+evidence/runs_rocky2397_NormChat.json -- the worker never fired.
 
 3. WHAT FAILED
 
 Stage: prioritize
 Run: https://github.com/rocky2397/NormChat/actions/runs/32944744840
-Error (from errors_rocky2397_NormChat_32944744840.txt):
+Error (evidence/errors_rocky2397_NormChat_32944744840.txt):
   "--json-schema was provided but Claude did not return
   structured_output. Result subtype: success"
   "Action failed with error: --json-schema was provided but Claude
   did not return structured_output. Result subtype: success"
   "Process completed with exit code 1."
-Reading: The "Prioritize with Claude" step failed after 22 seconds.
-No evidence/claude_*.json capture exists for this run, so the model
-transcript is not directly available, but the identical error text
-and near-identical timing to the 11:52 run (below) indicate the same
-underlying cause: the account was already out of usage credits at
-07:50.
+Reading: The "Prioritize with Claude" step failed after about 22
+seconds. No claude_*.json capture exists for this run, and -- unlike
+every other run today -- its step list has no "Emit run log" or
+"Upload run log" step at all (evidence/run_rocky2397_NormChat_
+32944744840.json jumps from step 6, Dispatch decision/skipped,
+straight to step 11, Post Prioritize with Claude), even though that
+step is declared if: always() in reusable-prioritizer.yml. This run
+never made it into logs/2026-08-26.jsonl; the only reason it is
+visible at all is the separately-collected errors_*.txt annotation.
 
 Stage: prioritize
 Run: https://github.com/rocky2397/NormChat/actions/runs/32965579783
-Error (from errors_rocky2397_NormChat_32965579783.txt):
+Error (evidence/errors_rocky2397_NormChat_32965579783.txt):
   "--json-schema was provided but Claude did not return
   structured_output. Result subtype: success"
   "Action failed with error: --json-schema was provided but Claude
   did not return structured_output. Result subtype: success"
   "Process completed with exit code 1."
 Claude transcript (evidence/claude_rocky2397_NormChat_32965579783.json)
-confirms the root cause directly: a rate_limit_event with
+gives the real cause directly: a rate_limit_event with
 "status":"rejected", "errorCode":"credits_required",
-"overageDisabledReason":"out_of_credits", followed by the model's
-only output, "You're out of usage credits. Switch to another model
-to continue." (api_error_status 429). The run's own structured log
-(logs/2026-08-26.jsonl) records the same: outcome "error", detail
-"prioritizer did not reach the dispatch step", result_text "You're
-out of usage credits. Switch to another model to continue."
-Reading: The job never reached "Dispatch decision" (that step is
-recorded as skipped), so no ticket was ever evaluated or picked.
+"overageDisabledReason":"out_of_credits" (HTTP 429), and the model's
+only output text, "You're out of usage credits. Switch to another
+model to continue." logs/2026-08-26.jsonl records the same via
+claude.result_text and detail "prioritizer did not reach the dispatch
+step". Reading: this is the same credits exhaustion as the 07:50 run,
+still unresolved four hours later, until the 12:11 human commit
+changed the configured model.
 
 4. SILENT FAILURES
-None found today in the strict sense (a green run that did nothing).
-Both prioritize runs are correctly marked conclusion "failure", not
-"success" -- the workflow's --json-schema check did its job and
-surfaced the credits problem loudly rather than swallowing it.
-Downstream triage and work jobs are marked "skipped", which is the
-honest outcome given prioritize never dispatched a decision.
 
-One gap is worth flagging as adjacent to a silent failure: the 07:50
-run (32944744840) has no "Emit run log" or "Upload run log" step in
-its recorded step list -- those steps are supposed to run
-unconditionally (if: always()) per reusable-prioritizer.yml, and did
-run in the 11:52 retry. Because that step never appears to have run
-for the 07:50 attempt, that failure never made it into
-logs/2026-08-26.jsonl or into a captured evidence/claude_*.json file.
-The only reason this report can describe the 07:50 failure at all is
-the separately-collected errors_rocky2397_NormChat_32944744840.txt
-annotation. If that annotation collection ever stops working, a
-failure like this one would leave no trace in the structured logs at
-all.
+The 12:13 UTC prioritize run (run 32967256708) is the important one.
+It reported job_status "success" and outcome "picked #8", added the
+"claude-work" label to issue #8, and posted "Prioritizer selected this
+ticket" as a comment -- all the visible signs of a normal, working
+pick. But evidence/issues_rocky2397_NormChat.json shows issue #8 in
+state CLOSED, with no claude-work label present (labels: []), and
+evidence/prs_rocky2397_NormChat.json is an empty array, so no PR was
+ever opened for it. The same run also reasoned about issues #9 and
+#10 as "blocked by #8" -- both are also CLOSED. Only issue #1 was
+correctly recognized as already done ("Project status is already
+Done, label in-review"), because it carried a label the model could
+read; #8, #9 and #10 had no such tell and were evaluated as if they
+were live Todo items. This matches, almost verbatim, a comment already
+committed in this repo's .github/workflows/reusable-prioritizer.yml:
+"The closed-issue filter is not optional... on 2026-08-26 it selected
+closed issue #8 and deprioritized closed #1, #9 and #10 while ignoring
+the one genuinely open ticket." That filter (select .content.state ==
+"OPEN") is present in this repo's current reusable-prioritizer.yml, so
+the fix exists -- but the run that actually executed against NormChat
+at 12:13 still exhibited the bug, meaning NormChat's own copy or
+pinned reference to this reusable workflow had not picked up the fix
+yet. Net effect: a run that looks identical in the logs to a real,
+useful pick did nothing but write noise to a dead issue, occupied the
+run's WIP slot, and left the genuinely open ticket the comment refers
+to untouched. Separately, adding the claude-work label to #8 should
+have fired reusable-worker.yml's "issues" trigger; no such run appears
+anywhere in evidence/runs_rocky2397_NormChat.json, so even if #8 had
+been a real ticket, nothing would have implemented it.
+
+The 12:16 UTC no_pick run is not a silent failure -- by then the board
+was genuinely empty (0 blocked, 0 deprioritized) and it said so
+honestly.
 
 5. RECURRING PATTERNS
-This is the first report in reports/ (only README.md existed prior
-to today), so no multi-day comparison is possible. Within today
-itself, the same failure (out of usage credits) occurred twice, about
-4 hours apart, with a human-triggered retry hitting the identical
-error -- the underlying account issue was not fixed between attempts.
+This is the first report in reports/ (only README.md predates it), so
+no multi-day comparison is possible. Within today: the credits
+failure repeated identically twice, four hours apart, with no change
+until a human intervened. The stale-board / closed-issue pick is a
+single occurrence today, but it is already significant enough that
+someone has committed an explanatory comment and a fix for it directly
+in reusable-prioritizer.yml referencing this exact date -- worth
+confirming tomorrow whether it recurs, which would indicate the fix
+did not reach NormChat's copy of the workflow.
 
 6. RECOMMENDED FIXES
-1. Restore or top up usage credits for the account behind
-   CLAUDE_CODE_OAUTH_TOKEN used in reusable-prioritizer.yml (and by
-   extension reusable-triage.yml / reusable-worker.yml, which share
-   the same credential path and would fail the same way). This is
-   the single blocker preventing any work today.
-2. In reusable-prioritizer.yml, the "Prioritize with Claude" step
-   already sets --fallback-model; confirm inputs.fallback_model is
-   configured to a model still covered by remaining credits/quota,
-   since the model's own error text ("Switch to another model to
-   continue") suggests a fallback should have been usable here.
-3. In reusable-prioritizer.yml, harden the "Emit run log" step (or
-   add a preceding step) so it does not depend on state that can go
-   missing when "Prioritize with Claude" fails early -- the 07:50 run
-   shows evidence of that step not executing despite if: always(),
-   which is the one path by which a real failure could go completely
-   unlogged.
-4. Consider alerting (e.g. a Slack/webhook step on job failure) so a
-   human notices a credits-exhaustion failure faster than the ~4 hour
-   gap seen between the 07:50 scheduled failure and the 11:52 manual
-   retry.
+1. Confirm rocky2397/NormChat's caller workflow references (or is
+   vendored from) a version of reusable-prioritizer.yml that includes
+   the "select(.content.state == \"OPEN\")" filter in the "Fetch
+   project board" step. That filter already exists on this repo's
+   main branch; if NormChat pins a ref/SHA or a stale copy that
+   predates it, bump the pin. This is the direct cause of the 12:13
+   run labelling and commenting on already-closed issue #8.
+2. Investigate why adding the "claude-work" label to issue #8 at
+   12:13 did not produce any "issues"-triggered run in
+   rocky2397/NormChat's Actions history. If reusable-worker.yml's
+   `implement` job (gated on github.event_name == 'issues' &&
+   github.event.label.name == 'claude-work') is only reachable via a
+   caller workflow that also filters on issue state, labelling a
+   closed issue may be silently swallowed before Claude ever runs --
+   worth an explicit log line either way, mirroring the "Emit run
+   log" pattern already used in reusable-prioritizer.yml.
+3. Restore/monitor usage credits for the CLAUDE_CODE_OAUTH_TOKEN
+   behind claude-fable-5, or default reusable-prioritizer.yml's
+   `model` input to claude-sonnet-5 permanently (NormChat has already
+   made this switch by hand as of the 12:11 commit) so a future
+   credits lapse on claude-fable-5 does not silently block the
+   scheduled run again.
+4. Fix the "Emit run log" / "Upload run log" steps so they reliably
+   run if: always() -- the 07:50 run (32944744840) is missing both
+   steps entirely, which is why that failure never reached
+   logs/2026-08-26.jsonl and was only recoverable from a separately
+   collected errors_*.txt file.

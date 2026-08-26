@@ -282,10 +282,17 @@ jobs:
         if: always()
         env:
           DAY: ${{ steps.cfg.outputs.day }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           [ -s "reports/$DAY.txt" ] || { echo "Nothing to commit."; exit 0; }
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # claude-code-action revokes its app token on the way out, which
+          # invalidates the credentials actions/checkout persisted in the git
+          # config. Re-point the remote at the job token so the push works
+          # regardless of what the action left behind.
+          git remote set-url origin \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git add "reports/$DAY.txt"
           [ -f "logs/$DAY.jsonl" ] && git add "logs/$DAY.jsonl" || true
           git diff --cached --quiet && { echo "No changes."; exit 0; }

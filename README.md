@@ -62,6 +62,20 @@ Run it for a past day, or re-run a day, with:
 gh workflow run nightly-report.yml --repo <you>/claude-automation -f date=2026-08-26
 ```
 
+## The worker bypasses permission checks
+
+`reusable-worker.yml` runs with `--dangerously-skip-permissions`. This is a
+considered choice, not an oversight. A prefix allowlist cannot express what
+the job needs: it matches command prefixes, so `python3 -m venv x && pip
+install -r req.txt` is denied because of the `&&`, and `Bash(pip:*)` never
+matches `/tmp/venv/bin/pip`. One NormChat run burned all 60 turns on ten such
+denials and produced nothing.
+
+What bounds the worker is the environment: an ephemeral runner discarded after
+the run, a token scoped to the one repo, a human merge gate on every PR, and
+the path denylist in the repo's `CLAUDE.md`. The prioritizer and triage
+stages keep their narrow allowlists — they only need to read.
+
 ## `--allowedTools` is an allowlist, not an addition
 
 The single most damaging bug this system has had: `--allowedTools` **replaces**
@@ -98,6 +112,8 @@ Claude opens PRs; a human merges. Never skip this in phase 1 — see
 
 - WIP limit (default 1) enforced by the prioritizer.
 - `--max-turns` caps on both workflows.
+- Prioritizer and triage keep narrow read-only tool allowlists; only the
+  worker bypasses permission checks, and only inside an ephemeral runner.
 - Worker never opens a PR on failing tests; it comments instead.
 - Path denylist (`.github/workflows/`, `infra/`, `migrations/`) belongs in
   each target repo's `CLAUDE.md`.

@@ -89,7 +89,9 @@ jobs:
                 if [ "$(jq -r --arg r "$RID" '.[]|select((.databaseId|tostring)==$r)|.conclusion' "evidence/runs_$SLUG.json")" = "failure" ]; then
                   find "_dl" -name claude-execution.json -print0 | while IFS= read -r -d '' f; do
                     jq -c '(if type=="array" then . else [.] end)
-                           | map(select(.type=="result" or .type=="system" or (.is_error==true)))' \
+                           | map(select(.type=="result" or .type=="system"
+                                        or .type=="rate_limit_event"
+                                        or .is_error==true or has("error")))' \
                       "$f" > "evidence/claude_${SLUG}_${RID}.json" 2>/dev/null || true
                   done
                 fi
@@ -253,11 +255,26 @@ jobs:
             fi
             echo
             echo "3. WHAT FAILED"
+            # The runner annotation is usually the symptom; the agent's own
+            # result text is the cause. Lead with the cause.
+            if [ -s "logs/$DAY.jsonl" ]; then
+              jq -r 'select(.job_status != "success" or .claude.is_error == true)
+                     | "- " + .stage + "  " + .run_url
+                       + "\n  cause:   " + (.claude.result_text // "not reported by the agent")
+                       + "\n  turns:   " + (.claude.num_turns|tostring)
+                       + "   denials: " + (.claude.permission_denials|tostring)' \
+                "logs/$DAY.jsonl"
+            fi
+            echo
+            echo "Runner error annotations:"
+            HAVE=0
             for f in evidence/errors_*.txt; do
-              [ -e "$f" ] || { echo "- No runner error annotations."; break; }
-              echo "-- $f"
+              [ -e "$f" ] || break
+              HAVE=1
+              echo "-- $(basename "$f" .txt | sed 's/^errors_//')"
               sed 's/^/   /' "$f"
             done
+            [ "$HAVE" = 1 ] || echo "- None."
           } > "reports/$DAY.txt"
           echo "Wrote mechanical fallback report."
 

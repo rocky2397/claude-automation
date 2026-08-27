@@ -1,0 +1,61 @@
+CLAUDE AUTOMATION - DAILY REPORT
+Date: 2026-08-27 (UTC)
+Repos reviewed: rocky2397/NormChat
+Verdict: No evidence of any activity today; the automation appears not
+to have run at all.
+
+1. SUMMARY
+All evidence for 2026-08-27 is empty. logs/2026-08-27.jsonl contains
+zero events, evidence/events.jsonl contains zero events, and
+evidence/runs_rocky2397_NormChat.json, evidence/issues_rocky2397_
+NormChat.json, and evidence/prs_rocky2397_NormChat.json are each empty
+JSON arrays. There is no record of a prioritize, triage, or work job
+firing, no issue activity, and no PR activity for this repo on this
+date. This is different from yesterday's report, where runs happened
+but mostly failed or did no useful work; today there is no sign the
+scheduled or dispatched workflows executed at all.
+
+2. WHAT RAN
+Nothing. evidence/runs_rocky2397_NormChat.json lists zero workflow
+runs for 2026-08-27, and logs/2026-08-27.jsonl has zero lines.
+
+3. WHAT FAILED
+No failure evidence exists for this date. There are no errors_*.txt
+or claude_*.json files under evidence/ for 2026-08-27, and no run or
+job records to attribute a failure to. This section cannot report a
+failure because there is nothing in the evidence to quote.
+
+4. SILENT FAILURES
+The absence of any run is itself the most significant finding, but it
+cannot be classified as a specific "reported success, did nothing" job
+the way prior reports could, because no job ran at all -- there is no
+job_status or outcome field to inspect. Whether the scheduled trigger
+never fired, fired and was not logged, or fired outside this
+collection window cannot be determined from the evidence on hand.
+
+5. RECURRING PATTERNS
+reports/2026-08-26.txt describes a day with real (if mostly failed or
+useless) run activity: two credits-exhaustion failures, a human config
+fix, and a stale-board pick of a closed issue. Today shows no runs at
+all, which is a new and different failure mode from anything recorded
+in that prior report -- not a continuation of the 08-26 patterns, but
+an absence of the process entirely. With only one prior day of reports
+available, it is not yet possible to say how many consecutive days
+this "no runs recorded" state has occurred; 2026-08-27 is the first
+day it appears in the available reports.
+
+6. RECOMMENDED FIXES
+1. Verify whether rocky2397/NormChat's scheduled trigger (cron) for
+   the "Claude Automation" workflow is still enabled and correctly
+   configured -- GitHub disables scheduled workflows automatically
+   after 60 days of repository inactivity, which would produce exactly
+   this symptom (zero runs, no errors, nothing to log).
+2. Check the evidence-collection step itself (whatever produces
+   evidence/runs_rocky2397_NormChat.json and logs/2026-08-27.jsonl)
+   against the GitHub Actions API directly for 2026-08-27, to rule out
+   a collection/export bug rather than a true absence of runs -- an
+   empty array from the collector is consistent with both "no runs
+   happened" and "the collector failed to fetch them."
+3. If the 08-26 human commit that switched models also touched
+   workflow triggers, schedules, or permissions, confirm that change
+   did not inadvertently disable the schedule for 08-27.

@@ -1,0 +1,21 @@
+CLAUDE AUTOMATION - DAILY REPORT
+Date:  2026-09-08
+Repos: rocky2397/NormChat
+Verdict: REVIEW STEP FAILED (failure) - mechanical fallback below.
+
+1. SUMMARY
+The nightly reviewer did not produce a report. The raw events
+for the day are listed below and in logs/2026-09-08.jsonl.
+
+2. WHAT RAN
+- 2026-09-08T12:03:53Z  rocky2397/NormChat  prioritize  outcome=no_pick  job=success
+  no ticket ready (0 blocked, 0 deprioritized)
+  https://github.com/rocky2397/NormChat/actions/runs/34223933535
+- 2026-09-08T17:11:08Z  rocky2397/NormChat  prioritize  outcome=no_pick  job=success
+  no ticket ready (0 blocked, 0 deprioritized)
+  https://github.com/rocky2397/NormChat/actions/runs/34255460130
+
+3. WHAT FAILED
+
+Runner error annotations:
+- None.

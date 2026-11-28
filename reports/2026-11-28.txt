@@ -1,0 +1,83 @@
+CLAUDE AUTOMATION - DAILY REPORT
+
+Date: 2026-11-28 (UTC)
+Repos reviewed: rocky2397/NormChat
+Verdict: No evidence of any pipeline activity today; every log and
+evidence file is empty, the thirty-sixth straight calendar day of
+the silent stretch that began 2026-10-24.
+
+1. SUMMARY
+The system did no useful work today. logs/2026-11-28.jsonl is a
+zero-byte file, evidence/events.jsonl is also zero bytes, and the
+issues, PRs, and runs evidence files for rocky2397/NormChat
+(evidence/issues_rocky2397_NormChat.json,
+evidence/prs_rocky2397_NormChat.json,
+evidence/runs_rocky2397_NormChat.json) each contain nothing but an
+empty JSON array ([]). There is no record of a prioritizer, worker,
+or triage job executing, succeeding, or failing on this repo today,
+and no evidence/errors_*.txt or evidence/claude_*.json files exist
+for the date either. This is identical to every day since
+2026-10-24: the evidence set contains nothing, which is itself the
+finding, not an absence of findings.
+
+2. WHAT RAN
+No jobs ran, or none were captured. logs/2026-11-28.jsonl has no
+entries, and evidence/runs_rocky2397_NormChat.json lists no workflow
+runs for the day. There is nothing to list chronologically.
+
+3. WHAT FAILED
+No failures are recorded, because no runs are recorded. There are no
+errors_*.txt or claude_*.json files for 2026-11-28 to examine.
+Absence of failure evidence is not the same as a clean day; it means
+the collection pipeline produced no data at all, which is the problem
+documented in sections 4 and 5.
+
+4. SILENT FAILURES
+The entire day is a silent failure at the collection level: either
+the "Claude Automation" scheduled workflow did not fire for
+rocky2397/NormChat on 2026-11-28, or it fired and its logging and
+evidence-collection steps produced no output, exactly as in every
+report since reports/2026-10-24.txt. No ticket was picked, no PR was
+opened, and no triage occurred that this evidence set can confirm,
+but critically there is also no evidence that the workflow attempted
+and failed; it looks like it simply did not run or did not log.
+
+5. RECURRING PATTERNS
+This is the thirty-sixth consecutive day (since 2026-10-24) with
+completely empty logs and evidence for rocky2397/NormChat. The prior
+day's report (reports/2026-11-27.txt) recorded this as the
+thirty-fifth straight day; today extends the streak by one. This
+same alerting gap has been recommended as a fix in every report
+since reports/2026-08-28.txt and remains unimplemented. Separately,
+the NormChat issue board's empty or near-empty state has been
+flagged in every report since reports/2026-09-05.txt and still
+cannot be assessed today, since no run captured board state; that
+recommendation has now stood unverified for roughly twelve weeks.
+
+6. RECOMMENDED FIXES
+1. Check the "Claude Automation" workflow's run history directly in
+   rocky2397/NormChat (gh run list --repo rocky2397/NormChat
+   --created 2026-10-24..2026-11-28) to determine whether the
+   scheduled trigger has fired at all during this thirty-six-day
+   window. This evidence set contains no workflow-run data for the
+   range and cannot answer that question on its own. This
+   recommendation has now been repeated in every report since
+   reports/2026-10-24.txt.
+2. If the workflow fired on any of these days, inspect why neither
+   the structured log step nor the evidence collection step produced
+   output, given that the same logging path worked successfully in
+   October before the gap began.
+3. Add explicit alerting (for example a Slack message or an issue
+   comment appended to .github/workflows/nightly-report.yml) for days
+   where gh run list returns zero runs for a repo that normally runs
+   on a schedule, so a gap like this one is caught same-day instead
+   of accumulating silently across now thirty-six consecutive days.
+   This has been recommended in every total-silence report since
+   reports/2026-08-28.txt and remains unimplemented.
+4. Clarify whether rocky2397/NormChat's "Claude Automation" workflow
+   is intended to run every day or only on a subset of days. A
+   thirty-six-day gap is long enough that it should be resolved as
+   a one-time policy decision rather than re-raised in every report.
+5. Continue escalating the empty NormChat issue board to its owner,
+   per every report since reports/2026-09-05.txt, once run data
+   resumes and can confirm the board's current state.
